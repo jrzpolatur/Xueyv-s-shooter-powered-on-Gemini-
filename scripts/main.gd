@@ -1,8 +1,8 @@
 extends Node3D
-## 免疫对决 M0-M2 demo — main orchestrator.
-## World = blood vessel: analytic flow field, drifting body cells,
-## 2 macrophages + 1 plasma cell. Player is a virus: infect cells,
-## lysis releases progeny that auto-infect; win at 100% infection.
+## 免疫对决 demo — main orchestrator (v2: large vessel world).
+## Player is a virus: infect cells, lysis releases progeny that
+## auto-infect; win at 100% infection. 2 macrophages + 1 plasma cell
+## defend, but everything the immune system does is SLOW now.
 
 const Util := preload("res://scripts/util.gd")
 const FlowFieldScript := preload("res://scripts/flow_field.gd")
@@ -14,12 +14,12 @@ const PlasmaCellScript := preload("res://scripts/plasma_cell.gd")
 const AntibodyScript := preload("res://scripts/antibody.gd")
 const HudScript := preload("res://scripts/hud.gd")
 
-const ARENA_RADIUS := 42.0
-const TARGET_CELL_COUNT := 24
+const ARENA_RADIUS := 75.0
+const TARGET_CELL_COUNT := 34
 const MACROPHAGE_COUNT := 2
 const MACROPHAGE_GRACE := 6.0
 const PROGENY_PER_LYSIS := 4
-const MAX_VIRUSES := 60
+const MAX_VIRUSES := 80
 const PLAYER_MAX_HP := 3
 const INFECT_TIME_PLAYER := 1.1
 const INFECT_TIME_PROGENY := 1.7
@@ -39,13 +39,14 @@ var cells: Array = []
 var macrophages: Array = []
 var plasma_cells: Array = []
 var antibodies: Array = []
-var debris: Array = []
+var rbc: Array = [] # red blood cells (ambient)
+var dust: Array = [] # plasma motes (ambient)
 var converted := 0
 var total_cells_count := 0
 
 var cam_yaw := 0.0
 var cam_pitch := 0.95
-var cam_dist := 26.0
+var cam_dist := 34.0
 var cam_node: Camera3D
 var shake := 0.0
 
@@ -64,11 +65,12 @@ func _ready() -> void:
 
 	_build_environment()
 	_build_arena()
-	_spawn_debris()
+	_spawn_ambient()
 	_spawn_entities()
 
 	cam_node = Camera3D.new()
 	cam_node.fov = 60.0
+	cam_node.far = 300.0
 	add_child(cam_node)
 	_update_camera(1.0)
 
@@ -86,84 +88,139 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Util.COL_BG
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.9, 0.55, 0.5)
-	env.ambient_light_energy = 0.85
+	env.ambient_light_color = Color(0.85, 0.5, 0.45)
+	env.ambient_light_energy = 0.8
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.45, 0.08, 0.12)
-	env.fog_density = 0.006
+	env.fog_light_color = Color(0.38, 0.06, 0.10)
+	env.fog_density = 0.0035
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
 	sun.rotation = Vector3(deg_to_rad(-55.0), deg_to_rad(-35.0), 0.0)
-	sun.light_energy = 1.25
-	sun.light_color = Color(1.0, 0.92, 0.88)
+	sun.light_energy = 1.2
+	sun.light_color = Color(1.0, 0.90, 0.85)
 	add_child(sun)
+
+	# cool fill light from the other side, for depth
+	var fill := DirectionalLight3D.new()
+	fill.rotation = Vector3(deg_to_rad(-30.0), deg_to_rad(140.0), 0.0)
+	fill.light_energy = 0.4
+	fill.light_color = Color(0.6, 0.7, 1.0)
+	add_child(fill)
 
 
 func _build_arena() -> void:
+	# tissue floor
 	var floor_mesh := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
-	cyl.top_radius = ARENA_RADIUS
-	cyl.bottom_radius = ARENA_RADIUS
-	cyl.height = 0.6
-	cyl.radial_segments = 48
+	cyl.top_radius = ARENA_RADIUS + 2.0
+	cyl.bottom_radius = ARENA_RADIUS + 5.0
+	cyl.height = 1.0
+	cyl.radial_segments = 56
 	floor_mesh.mesh = cyl
-	floor_mesh.position = Vector3(0, -0.55, 0)
-	floor_mesh.material_override = Util.make_mat(Util.COL_FLOOR, Util.COL_FLOOR * 0.35, 0.25, 0.9)
+	floor_mesh.position = Vector3(0, -0.8, 0)
+	floor_mesh.material_override = Util.make_mat(Util.COL_FLOOR, Util.COL_FLOOR * 0.3, 0.22, 0.95)
 	add_child(floor_mesh)
 
-	var rim := Util.make_torus(ARENA_RADIUS - 0.4, ARENA_RADIUS + 0.4, Util.make_mat(Util.COL_RIM, Util.COL_RIM, 1.6, 0.4))
-	rim.position = Vector3(0, 0.2, 0)
+	# lighter tissue patches on the floor (organic variation)
+	for i in 14:
+		var patch := MeshInstance3D.new()
+		var pc := CylinderMesh.new()
+		var rr := randf_range(4.0, 12.0)
+		pc.top_radius = rr
+		pc.bottom_radius = rr
+		pc.height = 0.06
+		pc.radial_segments = 20
+		patch.mesh = pc
+		var ang := randf() * TAU
+		var dist := sqrt(randf()) * (ARENA_RADIUS - 8.0)
+		patch.position = Vector3(cos(ang) * dist, -0.24, sin(ang) * dist)
+		var shade := randf_range(0.8, 1.3)
+		patch.material_override = Util.make_mat(Util.COL_FLOOR_PATCH * shade, Color(0, 0, 0), 0.0, 0.95)
+		add_child(patch)
+
+	# glowing rim
+	var rim := Util.make_torus(ARENA_RADIUS - 0.6, ARENA_RADIUS + 0.6, Util.make_mat(Util.COL_RIM, Util.COL_RIM, 1.5, 0.4))
+	rim.position = Vector3(0, 0.3, 0)
 	rim.rotation.x = PI / 2.0
 	add_child(rim)
 
+	# vessel wall rising from the rim (seen from inside)
+	var wall := MeshInstance3D.new()
+	var wc := CylinderMesh.new()
+	wc.top_radius = ARENA_RADIUS + 1.5
+	wc.bottom_radius = ARENA_RADIUS + 1.0
+	wc.height = 16.0
+	wc.radial_segments = 56
+	wc.cap_top = false
+	wc.cap_bottom = false
+	wall.mesh = wc
+	wall.position = Vector3(0, 7.2, 0)
+	var wall_mat := Util.make_mat(Color(0.16, 0.035, 0.05), Color(0.35, 0.05, 0.07), 0.35, 0.9)
+	wall_mat.cull_mode = BaseMaterial3D.CULL_FRONT
+	wall.material_override = wall_mat
+	add_child(wall)
 
-func _spawn_debris() -> void:
-	var mat_a := Util.make_mat(Color(0.75, 0.18, 0.2), Color(0, 0, 0), 0.0, 0.8)
-	var mat_b := Util.make_mat(Color(0.55, 0.1, 0.16), Color(0, 0, 0), 0.0, 0.8)
-	for i in 220:
-		var d := Util.make_sphere(0.16, mat_a if i % 2 == 0 else mat_b)
-		d.scale = Vector3(1.6, 0.4, 1.0)
+
+func _spawn_ambient() -> void:
+	# red blood cells drifting in flocks
+	var rbc_mat := Util.make_mat(Util.COL_RBC, Color(0.25, 0.02, 0.03), 0.25, 0.55)
+	for i in 42:
+		var r := Util.make_sphere(randf_range(1.1, 1.7), rbc_mat, 14)
+		r.scale = Vector3(1.0, 0.32, 1.0)
 		var ang := randf() * TAU
-		var r := sqrt(randf()) * (ARENA_RADIUS - 2.0)
-		d.position = Vector3(cos(ang) * r, randf_range(0.2, 5.0), sin(ang) * r)
-		add_child(d)
-		debris.append(d)
+		var d := sqrt(randf()) * (ARENA_RADIUS - 4.0)
+		r.position = Vector3(cos(ang) * d, randf_range(0.8, 7.0), sin(ang) * d)
+		r.rotation.y = randf() * TAU
+		add_child(r)
+		rbc.append(r)
+
+	# glowing plasma motes
+	var dust_mat := Util.make_mat(Color(1.0, 0.75, 0.7), Color(1.0, 0.5, 0.45), 1.1, 0.4)
+	for i in 50:
+		var p := Util.make_sphere(randf_range(0.06, 0.16), dust_mat, 6)
+		var ang := randf() * TAU
+		var d := sqrt(randf()) * (ARENA_RADIUS - 3.0)
+		p.position = Vector3(cos(ang) * d, randf_range(0.5, 11.0), sin(ang) * d)
+		add_child(p)
+		dust.append(p)
 
 
 func _spawn_entities() -> void:
 	total_cells_count = TARGET_CELL_COUNT
+	var player_spawn := Vector3(0, 1.6, 26.0)
 	for i in TARGET_CELL_COUNT:
 		var c = BodyCellScript.new()
-		c.position = _random_pos(3.0)
+		c.position = _random_pos(3.0, player_spawn, 16.0)
 		add_child(c)
 		cells.append(c)
 
-	var player_spawn := Vector3(0, 1.2, 14.0)
 	for i in MACROPHAGE_COUNT:
 		var m = MacrophageScript.new()
-		m.position = _random_pos(6.0)
-		while m.position.distance_to(player_spawn) < 28.0:
-			m.position = _random_pos(6.0)
+		m.position = _random_pos(8.0, player_spawn, 34.0)
 		add_child(m)
 		macrophages.append(m)
 
 	var p = PlasmaCellScript.new()
-	p.position = _random_pos(6.0)
+	p.position = _random_pos(8.0, player_spawn, 30.0)
 	add_child(p)
 	plasma_cells.append(p)
 
 	player = PlayerVirusScript.new()
-	player.position = Vector3(0, 1.2, 14.0)
+	player.position = player_spawn
 	add_child(player)
 
 
-func _random_pos(margin: float) -> Vector3:
-	var ang := randf() * TAU
-	var r := sqrt(randf()) * (ARENA_RADIUS - margin - 4.0)
-	return Vector3(cos(ang) * r, 1.0, sin(ang) * r)
+func _random_pos(margin: float, away_from := Vector3.ZERO, min_dist := 0.0) -> Vector3:
+	for attempt in 20:
+		var ang := randf() * TAU
+		var r := sqrt(randf()) * (ARENA_RADIUS - margin - 4.0)
+		var pos := Vector3(cos(ang) * r, 1.0, sin(ang) * r)
+		if min_dist <= 0.0 or pos.distance_to(away_from) >= min_dist:
+			return pos
+	return Vector3(0, 1.0, 0)
 
 
 # ---------------------------------------------------------------- main loop
@@ -176,11 +233,6 @@ func _physics_process(delta: float) -> void:
 
 	sim_time += delta
 	flow.time = sim_time
-
-	if smoke_test and Engine.get_physics_frames() % 600 == 0:
-		print("[smoke] status t=", int(sim_time), "s infected=", converted, "/", total_cells_count,
-			" prog=", progeny.size(), " hp=", player_hp, " max_prog=", max_progeny_seen,
-			" ppos=", player.global_position, " v=", player.velocity.length())
 
 	if invuln_timer > 0.0:
 		invuln_timer -= delta
@@ -223,7 +275,7 @@ func _physics_process(delta: float) -> void:
 			ab.queue_free()
 			antibodies.remove_at(ap)
 
-	_update_debris(delta)
+	_update_ambient(delta)
 	_update_infections(delta)
 	_resolve_collisions()
 	_update_camera(delta)
@@ -236,6 +288,11 @@ func _physics_process(delta: float) -> void:
 
 	_check_win_lose()
 	_update_hud()
+
+	if smoke_test and sim_time > 15.0 and Engine.get_physics_frames() % 600 == 0:
+		print("[smoke] status t=", int(sim_time), "s infected=", converted, "/", total_cells_count,
+			" prog=", progeny.size(), " hp=", player_hp, " max_prog=", max_progeny_seen,
+			" ppos=", player.global_position, " v=", player.velocity.length())
 
 
 func global_dist(a, b) -> float:
@@ -266,7 +323,7 @@ func infect_cell(c) -> void:
 	c.state = 1
 	c.lysis_timer = c.LYSIS_DELAY
 	converted += 1
-	shake = maxf(shake, 0.12)
+	shake = maxf(shake, 0.10)
 	if hud != null:
 		hud.toast(hud.T("细胞被感染！ %d/%d" % [converted, total_cells_count], "Cell infected! %d/%d" % [converted, total_cells_count]), 1.1)
 
@@ -276,10 +333,39 @@ func lyse_cell(c) -> void:
 		return
 	c.state = 2
 	c.alive = false
-	shake = maxf(shake, 0.3)
+	shake = maxf(shake, 0.25)
 	var pos: Vector3 = c.global_position
+	_lysis_burst(pos, c.radius)
 	c.queue_free()
 	spawn_progeny(pos, PROGENY_PER_LYSIS)
+
+
+## Burst of membrane fragments when a cell lyses.
+func _lysis_burst(pos: Vector3, radius: float) -> void:
+	var frag_mat := Util.make_mat(Util.COL_CELL, Util.COL_CELL_INFECTED * 0.6, 0.9, 0.6)
+	for i in 7:
+		var frag := Util.make_blob(randf_range(0.3, 0.6), 0.3, i * 31, frag_mat)
+		frag.position = pos + Vector3(randf_range(-1, 1), randf_range(0.5, 1.5), randf_range(-1, 1))
+		add_child(frag)
+		var dir := Vector3(randf_range(-1, 1), randf_range(0.3, 1.0), randf_range(-1, 1)).normalized()
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(frag, "position", frag.position + dir * randf_range(3.0, 6.0), 0.9)
+		tw.tween_property(frag, "scale", Vector3.ONE * 0.05, 0.9).set_ease(Tween.EASE_IN)
+		tw.chain().tween_callback(frag.queue_free)
+
+
+## Expanding shockwave ring (antibody impacts, lysis).
+func _hit_ring(pos: Vector3, color: Color) -> void:
+	var ring := Util.make_torus(0.9, 1.1, Util.make_mat(color, color, 2.0, 0.4))
+	ring.position = pos
+	ring.rotation.x = PI / 2.0
+	add_child(ring)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(ring, "scale", Vector3.ONE * 3.2, 0.45).set_ease(Tween.EASE_OUT)
+	tw.tween_property(ring, "position:y", ring.position.y + 1.2, 0.45)
+	tw.chain().tween_callback(ring.queue_free)
 
 
 func spawn_progeny(pos: Vector3, n: int) -> void:
@@ -287,12 +373,12 @@ func spawn_progeny(pos: Vector3, n: int) -> void:
 		if virus_count() >= MAX_VIRUSES:
 			return
 		var v = ProgenyVirusScript.new()
-		v.position = pos + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5))
+		v.position = pos + Vector3(randf_range(-0.8, 0.8), 0, randf_range(-0.8, 0.8))
 		var a := randf() * TAU
-		v.velocity = Vector3(cos(a), 0.0, sin(a)) * randf_range(6.0, 11.0)
+		v.velocity = Vector3(cos(a), 0.0, sin(a)) * randf_range(6.0, 10.0)
 		add_child(v)
 		progeny.append(v)
-	max_progeny_seen = maxi(max_progeny_seen, progeny.size())
+		max_progeny_seen = maxi(max_progeny_seen, progeny.size())
 
 
 func nearest_healthy_cell(pos: Vector3):
@@ -308,11 +394,11 @@ func nearest_healthy_cell(pos: Vector3):
 
 
 func infection_ratio() -> float:
-	return float(converted) / float(maxi(cells.size(), 1))
+	return float(converted) / float(maxi(total_cells_count, 1))
 
 
 func total_cells() -> int:
-	return cells.size()
+	return total_cells_count
 
 
 func virus_count() -> int:
@@ -391,8 +477,8 @@ func damage_player(from_pos: Vector3) -> void:
 	away.y = 0.0
 	if away.length_squared() < 0.01:
 		away = Vector3.FORWARD
-	player.global_position += away.normalized() * 6.0
-	player.velocity = away.normalized() * 18.0
+	player.global_position += away.normalized() * 8.0
+	player.velocity = away.normalized() * 20.0
 	if hud != null:
 		hud.toast(hud.T("被吞噬！剩余 HP：%d" % maxi(player_hp, 0), "Swallowed! HP left: %d" % maxi(player_hp, 0)), 1.6)
 	if player_hp <= 0:
@@ -403,18 +489,19 @@ func spawn_antibody(from_cell) -> void:
 	if player == null or not player.alive:
 		return
 	var ab = AntibodyScript.new()
-	var predicted: Vector3 = player.global_position + player.velocity * 0.35
+	var predicted: Vector3 = player.global_position + player.velocity * 0.4
 	var dir: Vector3 = (predicted - from_cell.global_position)
 	dir.y = 0.0
 	if dir.length_squared() < 0.01:
 		dir = Vector3.FORWARD
 	add_child(ab)
-	ab.launch(from_cell.global_position + dir.normalized() * (from_cell.radius + 0.6), dir, player)
+	ab.launch(from_cell.global_position + dir.normalized() * (from_cell.radius + 1.0), dir, player)
 	antibodies.append(ab)
 
 
-func on_antibody_hit(_t, _pos) -> void:
-	shake = maxf(shake, 0.1)
+func on_antibody_hit(_t, pos) -> void:
+	shake = maxf(shake, 0.08)
+	_hit_ring(pos, Util.COL_ANTIBODY)
 	if hud != null and player != null:
 		hud.toast(hud.T("被抗体标记 x%d（减速！巨噬细胞正在接近…）" % player.mark_stacks,
 			"Marked x%d (slowed! macrophages incoming…)" % player.mark_stacks), 1.4)
@@ -448,6 +535,7 @@ func _resolve_collisions() -> void:
 			var min_d: float = a.radius + b.radius
 			if d < min_d and d > 0.0001:
 				var push: Vector3 = (b.global_position - a.global_position) / d * ((min_d - d) * 0.5)
+				push.y = 0.0 # keep the fight on the flow plane
 				var wa := _movability(a)
 				var wb := _movability(b)
 				var total := wa + wb
@@ -470,24 +558,35 @@ func _movability(e) -> float:
 	return 0.3 # progeny
 
 
-# ---------------------------------------------------------------- misc updates
+# ---------------------------------------------------------------- ambient updates
 
-func _update_debris(delta: float) -> void:
-	for d in debris:
-		d.position += flow.velocity_at(d.position) * delta * 1.7
-		var r := sqrt(d.position.x * d.position.x + d.position.z * d.position.z)
-		if r > ARENA_RADIUS - 1.0:
-			var ang := randf() * TAU
-			var nr := sqrt(randf()) * (ARENA_RADIUS - 4.0)
-			d.position = Vector3(cos(ang) * nr, randf_range(0.2, 5.0), sin(ang) * nr)
+func _update_ambient(delta: float) -> void:
+	for r in rbc:
+		if not is_instance_valid(r):
+			continue
+		r.position += flow.velocity_at(r.position) * delta * 1.3
+		r.rotate_y(delta * 0.4)
+		var dxz := Vector2(r.position.x, r.position.z)
+		if dxz.length() > ARENA_RADIUS - 2.0:
+			# wrap to the opposite side, keep the height
+			r.position.x = -r.position.x * 0.9
+			r.position.z = -r.position.z * 0.9
+	for p in dust:
+		if not is_instance_valid(p):
+			continue
+		p.position += flow.velocity_at(p.position) * delta * 0.8
+		var dxz2 := Vector2(p.position.x, p.position.z)
+		if dxz2.length() > ARENA_RADIUS - 2.0:
+			p.position.x = -p.position.x * 0.9
+			p.position.z = -p.position.z * 0.9
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			cam_dist = maxf(14.0, cam_dist - 2.0)
+			cam_dist = maxf(18.0, cam_dist - 3.0)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			cam_dist = minf(44.0, cam_dist + 2.0)
+			cam_dist = minf(70.0, cam_dist + 3.0)
 
 
 func _update_camera(delta: float) -> void:
@@ -503,7 +602,7 @@ func _update_camera(delta: float) -> void:
 		sin(cam_yaw) * cos(cam_pitch),
 		sin(cam_pitch),
 		cos(cam_yaw) * cos(cam_pitch)
-	) * cam_dist + Vector3(0, 1.5, 0)
+	) * cam_dist + Vector3(0, 2.0, 0)
 
 	cam_node.global_position = cam_node.global_position.lerp(desired, 1.0 - exp(-9.0 * delta))
 	if shake > 0.0:
@@ -516,7 +615,6 @@ func _update_camera(delta: float) -> void:
 
 func _update_hud() -> void:
 	hud.update_hud(self)
-	hud.show_infecting(player_infecting_pct)
 
 
 func _check_win_lose() -> void:
