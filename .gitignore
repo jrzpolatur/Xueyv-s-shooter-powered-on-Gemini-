@@ -1,0 +1,13 @@
+# Godot
+.godot/
+*.tmp
+
+# Build output (regenerate with: python3 tools/make_build.py)
+build/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store

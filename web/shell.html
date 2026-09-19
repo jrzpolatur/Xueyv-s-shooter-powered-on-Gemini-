@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+<title>免疫对决 · 病毒 vs 免疫系统 (M0-M2)</title>
+<style>
+html, body, #canvas {
+	margin: 0; padding: 0; border: 0;
+	width: 100%; height: 100%;
+}
+body {
+	background: #2a060c; color: #f3d9dd; overflow: hidden;
+	font-family: 'Noto Sans SC', 'Noto Sans', Arial, sans-serif;
+	touch-action: none;
+}
+#canvas { display: block; outline: none; }
+#status {
+	position: absolute; inset: 0;
+	display: flex; flex-direction: column; gap: 14px;
+	align-items: center; justify-content: center;
+	background: radial-gradient(ellipse at center, #4a0d16 0%, #2a060c 70%);
+	text-align: center;
+}
+#status h1 { margin: 0 0 4px; font-size: 28px; color: #ff7fa3; letter-spacing: 2px; }
+#status p { margin: 0; opacity: 0.85; }
+#status-progress { width: min(420px, 70vw); height: 14px; }
+#status.error { color: #ff9c8a; }
+</style>
+</head>
+<body>
+<canvas id="canvas">你的浏览器不支持 canvas / Your browser does not support canvas.</canvas>
+<div id="status">
+	<h1>免疫对决 · 病毒 vs 免疫系统</h1>
+	<p id="status-text">正在加载引擎…</p>
+	<progress id="status-progress" max="1" value="0"></progress>
+	<p id="status-sub">Godot 4.7 · Web (no threads) · 官方模板运行时</p>
+</div>
+
+<script type="module">
+import Godot from './godot.web.template_release.wasm32.nothreads.js';
+
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('status-text');
+const statusSub = document.getElementById('status-sub');
+const progressEl = document.getElementById('status-progress');
+const EXEC = './godot.web.template_release.wasm32.nothreads';
+
+function setStatus(text, isError) {
+	statusText.textContent = text;
+	statusEl.classList.toggle('error', !!isError);
+}
+
+// ---- forward browser errors to the dev server so the sandbox can read them
+const logQueue = [];
+function log(line) { logQueue.push(String(line)); }
+setInterval(() => {
+	if (!logQueue.length) return;
+	const payload = JSON.stringify(logQueue.splice(0));
+	fetch('/client-log', { method: 'POST', body: payload }).catch(() => {});
+}, 800);
+window.addEventListener('error', (e) => log('[window.error] ' + e.message + ' @' + e.filename + ':' + e.lineno));
+window.addEventListener('unhandledrejection', (e) => log('[unhandledrejection] ' + ((e.reason && e.reason.message) || e.reason)));
+const origErr = console.error.bind(console);
+console.error = (...a) => {
+	log('[console.error] ' + a.map((x) => (x && x.message) || String(x)).join(' '));
+	origErr(...a);
+};
+
+function trackDownload(resp, label, onDone) {
+	const total = Number(resp.headers.get('Content-Length') || 0);
+	if (!resp.body || !total) { onDone(resp); return; }
+	let received = 0;
+	const bars = { wasm: 0, pck: 0 };
+	const weights = { wasm: 0.92, pck: 0.08 };
+	function redraw() {
+		const done = (bars.wasm * weights.wasm + bars.pck * weights.pck);
+		progressEl.value = done;
+	}
+	const reader = resp.body.getReader();
+	const chunks = [];
+	function pump() {
+		return reader.read().then(({ done, value }) => {
+			if (done) { onDone(new Response(new Blob(chunks), { headers: [['content-type', resp.headers.get('content-type') || '']] })); return; }
+			chunks.push(value);
+			received += value.length;
+			bars[label] = received / total;
+			redraw();
+			setStatus('正在下载 ' + (label === 'wasm' ? '引擎' : '游戏数据') + '… ' + Math.round(received / 1024) + ' / ' + Math.round(total / 1024) + ' KB');
+			return pump();
+		});
+	}
+	return pump();
+}
+
+function checkWebGL2() {
+	const c = document.createElement('canvas');
+	const gl = c.getContext('webgl2');
+	if (!gl) return false;
+	const ext = gl.getExtension('WEBGL_lose_context');
+	if (ext) ext.loseContext();
+	return true;
+}
+
+async function boot() {
+	if (!checkWebGL2()) {
+		setStatus('此浏览器不支持 WebGL2,无法运行 3D 画面。请换 Chrome / Edge / Firefox。', true);
+		return;
+	}
+	const wasmResp = await fetch(EXEC + '.wasm');
+	const pckResp = await fetch('./game.pck');
+	if (!wasmResp.ok || !pckResp.ok) {
+		setStatus('资源下载失败 (HTTP ' + wasmResp.status + ' / ' + pckResp.status + ')', true);
+		return;
+	}
+	const wasmBody = await new Promise((resolve) => trackDownload(wasmResp, 'wasm', resolve));
+	statusText.textContent = '正在初始化引擎…';
+	progressEl.value = 0.95;
+
+	const mod = await Godot({
+		'print': (...a) => console.log('[godot]', ...a),
+		'printErr': (...a) => console.error('[godot]', ...a),
+		'thisProgram': 'godot',
+		'noExitRuntime': false,
+		'dynamicLibraries': [],
+		'canvas': document.getElementById('canvas'),
+		'locateFile': (path) => {
+			if (path.endsWith('.audio.worklet.js')) return './audio.worklet.js';
+			if (path.endsWith('.audio.position.worklet.js')) return './audio.position.worklet.js';
+			if (path.endsWith('.wasm')) return EXEC + '.wasm';
+			return path;
+		},
+		'instantiateWasm': (imports, onSuccess) => {
+			WebAssembly.instantiateStreaming(Promise.resolve(wasmBody), imports)
+				.then((r) => onSuccess(r['instance'], r['module']))
+				.catch((e) => log('[instantiateWasm] ' + e.message));
+			return {};
+		},
+	});
+
+	await mod.initFS(['/userfs']);
+	const canvas = document.getElementById('canvas');
+	canvas.tabIndex = 0;
+	mod.initConfig({
+		'canvas': canvas,
+		'canvasResizePolicy': 2,
+		'locale': (navigator.languages ? navigator.languages[0] : (navigator.language || 'en')).split('.')[0].replace('-', '_'),
+		'persistentDrops': false,
+		'virtualKeyboard': false,
+		'godotPoolSize': 4,
+		'focusCanvas': true,
+		'onExecute': null,
+		'onExit': (code) => setStatus('引擎已退出 (code ' + code + '),刷新页面重开。'),
+	});
+
+	statusText.textContent = '正在载入游戏数据…';
+	const pckBuf = new Uint8Array(await (await pckResp.arrayBuffer()).slice(0));
+	mod.copyToFS('game.pck', pckBuf);
+	statusText.textContent = '启动中…';
+	mod.callMain(['--main-pack', 'game.pck']);
+	statusEl.style.display = 'none';
+	canvas.focus();
+}
+
+boot().catch((e) => {
+	console.error(e);
+	setStatus('启动失败: ' + ((e && e.message) || e), true);
+});
+</script>
+</body>
+</html>
