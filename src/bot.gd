@@ -61,6 +61,22 @@ func _think() -> void:
 			if state == "flee" or (state == "engage" and dist > float(wdef["range"]) * 1.05):
 				want_skill = true
 
+	# 必杀技决策
+	if ult_charge >= ULT_NEED and target != null and state != "roam":
+		match String(udef["id"]):
+			"storm":
+				if dist < 320.0:
+					want_ult = true
+			"meteor":
+				if dist < 500.0 and state == "engage":
+					want_ult = true
+			"wall":
+				if state == "flee" or hp < max_hp * 0.5:
+					want_ult = true
+			"chrono":
+				if dist < 420.0:
+					want_ult = true
+
 	# 卡墙检测
 	if move_input.length() > 0.1 and global_position.distance_to(last_pos) < 9.0:
 		roam_target = _random_point()

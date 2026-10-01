@@ -74,6 +74,26 @@ func _ready() -> void:
 	mode_desc.add_theme_constant_override("outline_size", 4)
 	center.add_child(mode_desc)
 
+	# —— 地图选择 ——
+	var map_row := HBoxContainer.new()
+	map_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	map_row.add_theme_constant_override("separation", 10)
+	center.add_child(map_row)
+	var map_group := ButtonGroup.new()
+	var map_opts := {"random": "随机地图"}
+	for mk in Catalog.MAPS:
+		map_opts[mk] = String(Catalog.MAPS[mk]["name"])
+	for mk in map_opts:
+		var mb := _opt_button(String(map_opts[mk]), map_group)
+		mb.custom_minimum_size = Vector2(150, 38)
+		mb.add_theme_font_size_override("font_size", 16)
+		mb.button_pressed = (G.map == mk)
+		mb.toggled.connect(func(on: bool):
+			if on:
+				G.map = mk
+				G.play_sfx("ui"))
+		map_row.add_child(mb)
+
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 14)
 	cols.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -82,6 +102,7 @@ func _ready() -> void:
 	cols.add_child(_chara_column())
 	cols.add_child(_pick_column("武 器", "weapon", Catalog.WEAPONS))
 	cols.add_child(_pick_column("技 能", "skill", Catalog.SKILLS))
+	cols.add_child(_pick_column("必 杀", "ult", Catalog.ULTS))
 	cols.add_child(_pick_column("道 具", "item", Catalog.ITEMS))
 
 	var start := Button.new()
@@ -101,7 +122,7 @@ func _ready() -> void:
 	center.add_child(start_wrap)
 
 	var hint := Label.new()
-	hint.text = "电脑：WASD 移动 · 鼠标瞄准 · 左键射击 · 空格/右键技能      手机：左摇杆移动 · 右摇杆瞄准射击"
+	hint.text = "电脑：WASD 移动 · 鼠标瞄准 · 左键射击 · 空格/右键技能 · E 必杀      手机：双摇杆 + 技能/必杀按钮"
 	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
 	hint.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
@@ -163,7 +184,7 @@ func _pick_column(header: String, slot: String, data: Dictionary) -> PanelContai
 		box.add_child(btn)
 	desc.text = String(data[G.loadout[slot]]["desc"])
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc.custom_minimum_size = Vector2(190, 58)
+	desc.custom_minimum_size = Vector2(150, 58)
 	desc.add_theme_font_size_override("font_size", 14)
 	desc.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0, 0.95))
 	box.add_child(desc)
@@ -186,8 +207,8 @@ func _opt_button(text: String, group: ButtonGroup) -> Button:
 	b.toggle_mode = true
 	b.button_group = group
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(170, 40)
-	b.add_theme_font_size_override("font_size", 18)
+	b.custom_minimum_size = Vector2(150, 38)
+	b.add_theme_font_size_override("font_size", 17)
 	b.add_theme_stylebox_override("normal", _style(Color(0.14, 0.18, 0.28, 0.9), 10))
 	b.add_theme_stylebox_override("hover", _style(Color(0.2, 0.26, 0.4, 0.95), 10))
 	b.add_theme_stylebox_override("pressed", _style(Color(0.9, 0.5, 0.14, 0.95), 10))

@@ -6,8 +6,10 @@ var loadout := {
 	"weapon": "blaster",
 	"skill": "dash",
 	"item": "boots",
+	"ult": "storm",
 }
 var mode := "ffa"
+var map := "random"
 var touch_mode := false
 var player: Node = null
 var sfx_cache := {}
@@ -30,6 +32,7 @@ func _setup_actions() -> void:
 	_key_action("move_left", [KEY_A, KEY_LEFT])
 	_key_action("move_right", [KEY_D, KEY_RIGHT])
 	_key_action("skill", [KEY_SPACE])
+	_key_action("ult", [KEY_E, KEY_Q])
 	_mouse_action("fire", MOUSE_BUTTON_LEFT)
 	_mouse_action("skill", MOUSE_BUTTON_RIGHT)
 

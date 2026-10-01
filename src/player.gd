@@ -45,3 +45,5 @@ func _read_input() -> void:
 
 	if Input.is_action_just_pressed("skill"):
 		want_skill = true
+	if Input.is_action_just_pressed("ult"):
+		want_ult = true

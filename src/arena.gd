@@ -10,30 +10,47 @@ const FFA_TIME := 180.0
 const GEMS_TIME := 240.0
 const GEM_TARGET := 10
 const GEM_WIN_HOLD := 15.0
-# 地图：W=墙 B=草丛 C=箱子 1-6=出生点 .=地面（行自动补齐，边界强制为墙）
-const MAP := [
-	"WWWWWWWWWWWWWWWWWWWWWWWW",
-	"W1....B........B.....2.W",
-	"W..BB...C..WW..C..BB...W",
-	"W......W........W......W",
-	"W..C...W..BBBB..W..C...W",
-	"W......................W",
-	"W.BB..WW..C..C..WW..BB.W",
-	"W3.........WW.........4W",
-	"W.BB..WW..C..C..WW..BB.W",
-	"W......................W",
-	"W..C...W..BBBB..W..C...W",
-	"W......W........W......W",
-	"W..BB...C..WW..C..BB...W",
-	"W5....B........B.....6.W",
-	"WWWWWWWWWWWWWWWWWWWWWWWW",
-]
-# 宝石产出点（避开中央墙体的空地）
+# 地图字符：W=墙 B=草丛 C=箱子 L=岩浆 1-6=出生点 .=地面（行自动补齐，边界强制为墙）
+# 宝石产出点（两张地图中央均为空地）
 const GEM_SPOTS := [
 	Vector2(1200, 550), Vector2(1200, 950), Vector2(950, 750), Vector2(1450, 750),
 ]
 
+
+class LavaPool:
+	extends Area2D
+	var pulse := 0.0
+
+	func _ready() -> void:
+		collision_layer = 0
+		collision_mask = 2
+		z_index = -5
+		var cs := CollisionShape2D.new()
+		var sh := CircleShape2D.new()
+		sh.radius = 46.0
+		cs.shape = sh
+		add_child(cs)
+		body_entered.connect(func(body: Node2D):
+			if body is Unit:
+				body.lava_count += 1)
+		body_exited.connect(func(body: Node2D):
+			if body is Unit and is_instance_valid(body):
+				body.lava_count = maxi(0, body.lava_count - 1))
+
+	func _process(delta: float) -> void:
+		pulse += delta * 3.0
+		queue_redraw()
+
+	func _draw() -> void:
+		var glow := 0.75 + sin(pulse) * 0.25
+		draw_circle(Vector2.ZERO, 56.0, Color(1.0, 0.35, 0.05, 0.25 * glow))
+		draw_circle(Vector2.ZERO, 46.0, Color(1.0, 0.45, 0.1, 0.85))
+		draw_circle(Vector2.ZERO, 34.0, Color(1.0, 0.72, 0.2, 0.9 * glow))
+		draw_circle(Vector2.ZERO, 18.0, Color(1.0, 0.9, 0.5, glow))
+
 var mode := "ffa"
+var map_key := "grass"
+var mdef: Dictionary
 var world: Node2D
 var bush_layer: Node2D
 var camera: Camera2D
@@ -58,13 +75,17 @@ var win_countdown := 0.0
 
 func _ready() -> void:
 	mode = G.mode
+	map_key = G.map
+	if map_key == "random" or not Catalog.MAPS.has(map_key):
+		map_key = Catalog.MAPS.keys().pick_random()
+	mdef = Catalog.MAPS[map_key]
 	time_left = GEMS_TIME if mode == "gems" else FFA_TIME
-	map_h = MAP.size()
-	wall_tex = load("res://assets/img/wall.png")
+	map_h = (mdef["rows"] as Array).size()
+	wall_tex = load(String(mdef["wall"]))
 	bush_tex = load("res://assets/img/bush.png")
 
 	var ground := Sprite2D.new()
-	ground.texture = load("res://assets/img/grass_tile.png")
+	ground.texture = load(String(mdef["ground"]))
 	ground.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	ground.region_enabled = true
 	ground.region_rect = Rect2(0, 0, map_w * TILE, map_h * TILE)
@@ -106,8 +127,9 @@ func _ready() -> void:
 
 
 func _build_map() -> void:
+	var rows: Array = mdef["rows"]
 	for y in range(map_h):
-		var row: String = MAP[y]
+		var row: String = rows[y]
 		for x in range(map_w):
 			var ch := "."
 			if x < row.length():
@@ -120,6 +142,10 @@ func _build_map() -> void:
 					_add_wall(pos)
 				"B":
 					_add_bush(pos)
+				"L":
+					var lv := LavaPool.new()
+					add_child(lv)
+					lv.global_position = pos
 				"C":
 					var c := Crate.new()
 					world.add_child(c)
@@ -178,6 +204,7 @@ func _spawn_units() -> void:
 	var weapon_keys := Catalog.WEAPONS.keys()
 	var skill_keys := Catalog.SKILLS.keys()
 	var item_keys := Catalog.ITEMS.keys()
+	var ult_keys := Catalog.ULTS.keys()
 	var bot_names := Catalog.BOT_NAMES.duplicate()
 	bot_names.shuffle()
 
@@ -204,6 +231,7 @@ func _spawn_units() -> void:
 				"weapon": weapon_keys.pick_random(),
 				"skill": skill_keys.pick_random(),
 				"item": item_keys.pick_random(),
+				"ult": ult_keys.pick_random(),
 			}
 			var bteam := 0 if i < 2 else 1
 			bot.setup(self, lo, bot_names[i], false, bteam)
@@ -236,6 +264,7 @@ func _spawn_units() -> void:
 				"weapon": weapon_keys.pick_random(),
 				"skill": skill_keys.pick_random(),
 				"item": item_keys.pick_random(),
+				"ult": ult_keys.pick_random(),
 			}
 			bot2.setup(self, lo2, bot_names[i], false, i + 1)
 			bot2.global_position = points[(i + 1) % points.size()]
@@ -319,6 +348,54 @@ func team_gems(t: int) -> int:
 
 func add_shake(s: float) -> void:
 	shake = minf(shake + s, 18.0)
+
+
+func explode(pos: Vector2, radius: float, damage: float, source: Unit, col: Color) -> void:
+	## 通用范围爆炸（流星等），在非物理回调时机调用
+	FX.ring(self, pos, radius, col, 0.4, true)
+	FX.burst(self, pos, col, 20, 360.0)
+	G.play_sfx("boom", pos, -4.0)
+	if source != null and is_instance_valid(source) and source.is_player_unit:
+		add_shake(6.0)
+	for u in units:
+		if not is_instance_valid(u) or not u.alive:
+			continue
+		if source != null and is_instance_valid(source) and (u == source or u.team == source.team):
+			continue
+		if u.global_position.distance_to(pos) <= radius:
+			u.take_damage(damage, source)
+			u.kb_vel = (u.global_position - pos).normalized() * 280.0
+	for c in world.get_children():
+		if c is Crate and c.global_position.distance_to(pos) <= radius:
+			(c as Crate).take_damage(damage, source)
+
+
+func spawn_temp_wall(pos: Vector2, dur: float) -> void:
+	# 不在单位身上召唤，避免卡住
+	for u in units:
+		if is_instance_valid(u) and u.alive and u.global_position.distance_to(pos) < 60.0:
+			return
+	var w := StaticBody2D.new()
+	w.collision_layer = 1
+	w.collision_mask = 0
+	var cs := CollisionShape2D.new()
+	var sh := RectangleShape2D.new()
+	sh.size = Vector2(80, 70)
+	cs.shape = sh
+	w.add_child(cs)
+	var s := Sprite2D.new()
+	s.texture = wall_tex
+	s.scale = Vector2(0.5, 0.5)
+	s.offset = Vector2(0, -22)
+	s.modulate = Color(0.95, 0.9, 0.8)
+	w.add_child(s)
+	world.add_child(w)
+	w.global_position = pos
+	FX.burst(self, pos, Color(0.8, 0.75, 0.6), 10, 200.0)
+	var tw := w.create_tween()
+	tw.tween_interval(dur - 0.4)
+	tw.tween_property(s, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(w.queue_free)
 
 
 func random_point() -> Vector2:

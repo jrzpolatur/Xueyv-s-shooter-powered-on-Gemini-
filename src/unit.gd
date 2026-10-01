@@ -10,6 +10,7 @@ const BASE_HP := 100.0
 const BASE_SPEED := 300.0
 const CUBE_DMG := 0.12
 const CUBE_HP := 8.0
+const ULT_NEED := 500.0
 
 
 class InfoDraw:
@@ -54,6 +55,7 @@ var gems := 0
 var wdef: Dictionary
 var sdef: Dictionary
 var idef: Dictionary
+var udef: Dictionary
 var chara_tint := Color.WHITE
 
 var max_hp := BASE_HP
@@ -64,6 +66,11 @@ var lifesteal := 0.0
 var cd_mult := 1.0
 var armor_mult := 1.0
 var rage_t := 0.0
+var slow_t := 0.0
+var lava_count := 0
+var lava_tick := 0.0
+var ult_charge := 0.0
+var want_ult := false
 
 var kills := 0
 var deaths := 0
@@ -105,6 +112,7 @@ func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: 
 	wdef = Catalog.WEAPONS[p_loadout["weapon"]]
 	sdef = Catalog.SKILLS[p_loadout["skill"]]
 	idef = Catalog.ITEMS[p_loadout["item"]]
+	udef = Catalog.ULTS[p_loadout.get("ult", "storm")]
 	chara_tint = cdef["tint"]
 	max_hp = BASE_HP * float(idef.get("hp_mult", 1.0))
 	hp = max_hp
@@ -183,6 +191,19 @@ func _physics_process(delta: float) -> void:
 	reveal_t = maxf(0.0, reveal_t - delta)
 	dash_t = maxf(0.0, dash_t - delta)
 	rage_t = maxf(0.0, rage_t - delta)
+	slow_t = maxf(0.0, slow_t - delta)
+	# 岩浆灼烧
+	if lava_count > 0 and invuln_t <= 0.0:
+		hp -= 15.0 * delta
+		regen_wait = maxf(regen_wait, 1.5)
+		lava_tick -= delta
+		if lava_tick <= 0.0:
+			lava_tick = 0.6
+			FX.damage_num(arena, global_position + Vector2(0, -120), "灼烧", Color(1, 0.55, 0.2))
+			FX.flash(sprite)
+		if hp <= 0.0:
+			die(null)
+			return
 	if shield > 0.0:
 		shield_t -= delta
 		if shield_t <= 0.0:
@@ -195,6 +216,8 @@ func _physics_process(delta: float) -> void:
 		velocity = dash_dir * 950.0
 	else:
 		var spd := move_speed * (1.25 if rage_t > 0.0 else 1.0)
+		if slow_t > 0.0:
+			spd *= 0.4
 		velocity = move_input.limit_length(1.0) * spd + kb_vel
 	kb_vel = kb_vel.move_toward(Vector2.ZERO, 1400.0 * delta)
 	move_and_slide()
@@ -204,6 +227,9 @@ func _physics_process(delta: float) -> void:
 	if want_skill and skill_cd <= 0.0:
 		use_skill()
 	want_skill = false
+	if want_ult and ult_charge >= ULT_NEED:
+		use_ult()
+	want_ult = false
 
 	_update_visual(delta)
 
@@ -253,6 +279,8 @@ func _draw() -> void:
 	draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 32, ring_col, 3.0)
 	if rage_t > 0.0:
 		draw_arc(Vector2.ZERO, 36.0, 0.0, TAU, 32, Color(1, 0.25, 0.2, 0.8), 3.0)
+	if slow_t > 0.0:
+		draw_arc(Vector2.ZERO, 40.0, 0.0, TAU, 32, Color(0.4, 0.7, 1.0, 0.7), 3.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if is_player_unit and sprite != null and sprite.visible:
 		draw_line(aim_dir * 40.0, aim_dir * 170.0, Color(1, 1, 1, 0.18), 4.0)
@@ -319,6 +347,60 @@ func use_skill() -> void:
 			FX.burst(arena, global_position, Color(1, 0.3, 0.25), 16, 300.0)
 
 
+func add_ult_charge(v: float) -> void:
+	ult_charge = minf(ULT_NEED, ult_charge + v)
+
+
+func use_ult() -> void:
+	ult_charge = 0.0
+	G.play_sfx("ult", global_position, -2.0)
+	if is_player_unit and arena.has_method("add_shake"):
+		arena.add_shake(8.0)
+	var clamped_aim: Vector2 = global_position + (aim_point - global_position).limit_length(500.0)
+	match String(udef["id"]):
+		"storm":
+			_storm_wave()
+			for w in [0.22, 0.44]:
+				var t := get_tree().create_timer(w)
+				t.timeout.connect(_storm_wave)
+		"meteor":
+			for k in range(5):
+				var pos := clamped_aim + Vector2(randf_range(-130, 130), randf_range(-110, 110))
+				FX.ring(arena, pos, 70.0, Color(1, 0.4, 0.2, 0.8), 0.85)
+				var t2 := get_tree().create_timer(0.8 + k * 0.13)
+				var dmg := 42.0 * total_dmg_mult()
+				t2.timeout.connect(func():
+					if arena != null and is_instance_valid(arena) and arena.has_method("explode"):
+						arena.explode(pos, 95.0, dmg, self, Color(1, 0.5, 0.25)))
+		"wall":
+			var base := global_position + aim_dir * 140.0
+			var perp := aim_dir.orthogonal()
+			for k in [-1, 0, 1]:
+				if arena.has_method("spawn_temp_wall"):
+					arena.spawn_temp_wall(base + perp * float(k) * 85.0, 6.0)
+			FX.ring(arena, base, 90.0, Color(0.8, 0.75, 0.6), 0.4)
+		"chrono":
+			FX.ring(arena, clamped_aim, 190.0, Color(0.45, 0.7, 1.0), 0.6, true)
+			for u in arena.get("units"):
+				if u == self or not is_instance_valid(u) or not u.alive or u.team == team:
+					continue
+				if u.global_position.distance_to(clamped_aim) <= 190.0:
+					u.slow_t = 4.0
+					u.take_damage(10.0 * total_dmg_mult(), self)
+
+
+func _storm_wave() -> void:
+	if not alive or arena == null or not is_instance_valid(arena):
+		return
+	G.play_sfx("shot1", global_position, -6.0)
+	for k in range(14):
+		var ang := TAU * float(k) / 14.0 + randf_range(0.0, 0.25)
+		var d := Vector2.from_angle(ang)
+		var p := Projectile.new()
+		arena.add_child(p)
+		p.setup(self, global_position + d * 32.0, d, Catalog.ULT_PROJ, global_position + d * 100.0)
+
+
 func take_damage(amount: float, source: Unit) -> void:
 	if not alive or invuln_t > 0.0:
 		return
@@ -335,9 +417,11 @@ func take_damage(amount: float, source: Unit) -> void:
 			Color(1, 0.9, 0.3) if source != null and source.is_player_unit else Color(1, 0.45, 0.45))
 		FX.flash(sprite)
 		G.play_sfx("hit", global_position, -8.0)
-		if source != null and is_instance_valid(source) and source != self \
-				and source.alive and source.lifesteal > 0.0:
-			source.heal(a * source.lifesteal, false)
+		if source != null and is_instance_valid(source) and source != self and source.alive:
+			if source.lifesteal > 0.0:
+				source.heal(a * source.lifesteal, false)
+			if source.team != team:
+				source.add_ult_charge(a * 0.9)
 	if hp <= 0.0:
 		die(source)
 
@@ -368,6 +452,8 @@ func die(killer: Unit) -> void:
 	FX.burst(arena, global_position, chara_tint, 26, 380.0)
 	FX.ring(arena, global_position, 90.0, chara_tint, 0.45)
 	G.play_sfx("death", global_position, -2.0)
+	if killer != null and is_instance_valid(killer) and killer != self:
+		killer.add_ult_charge(150.0)
 	died.emit(self, killer)
 
 

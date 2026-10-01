@@ -88,6 +88,69 @@ const ITEMS := {
 
 const BOT_NAMES := ["小樱", "凯", "雪乃", "阿岚", "美羽", "千夏", "隼人"]
 
+const ULTS := {
+	"storm": {"id": "storm", "name": "弹幕风暴", "desc": "向四周旋转喷射三轮环形弹幕。"},
+	"meteor": {"id": "meteor", "name": "天降流星", "desc": "轰炸瞄准区域，落下 5 颗爆炸流星。"},
+	"wall": {"id": "wall", "name": "磐石壁垒", "desc": "在面前召唤一排临时岩壁，持续 6 秒。"},
+	"chrono": {"id": "chrono", "name": "时空牢笼", "desc": "大范围减速敌人 60%，持续 4 秒。"},
+}
+
+## 弹幕风暴的子弹参数（供 Projectile 使用）
+const ULT_PROJ := {
+	"damage": 11.0, "interval": 0.1, "speed": 720.0, "range": 430.0,
+	"pellets": 1, "spread": 0.0, "size": 8.0,
+	"pierce": false, "arc": false, "aoe": 0.0,
+	"color": Color(1.0, 0.85, 0.35), "sfx": "shot1", "shake": 0.0,
+	"desired_range": 300.0,
+}
+
+const MAPS := {
+	"grass": {
+		"name": "苍翠竞技场", "desc": "经典草原：草丛密布，适合伏击。",
+		"ground": "res://assets/img/grass_tile.png",
+		"wall": "res://assets/img/wall.png",
+		"rows": [
+			"WWWWWWWWWWWWWWWWWWWWWWWW",
+			"W1....B........B.....2.W",
+			"W..BB...C..WW..C..BB...W",
+			"W......W........W......W",
+			"W..C...W..BBBB..W..C...W",
+			"W......................W",
+			"W.BB..WW..C..C..WW..BB.W",
+			"W3.........WW.........4W",
+			"W.BB..WW..C..C..WW..BB.W",
+			"W......................W",
+			"W..C...W..BBBB..W..C...W",
+			"W......W........W......W",
+			"W..BB...C..WW..C..BB...W",
+			"W5....B........B.....6.W",
+			"WWWWWWWWWWWWWWWWWWWWWWWW",
+		],
+	},
+	"lava": {
+		"name": "熔岩峡谷", "desc": "岩浆灼烧地面，走位失误代价惨重。",
+		"ground": "res://assets/img/lava_tile.png",
+		"wall": "res://assets/img/lava_wall.png",
+		"rows": [
+			"WWWWWWWWWWWWWWWWWWWWWWWW",
+			"W1.....C......C......2.W",
+			"W..BB......WW......BB..W",
+			"W....W..L......L..W....W",
+			"W.C..W............W..C.W",
+			"W........LL..LL........W",
+			"W..W..BB........BB..W..W",
+			"W3....L....CC....L....4W",
+			"W..W..BB........BB..W..W",
+			"W........LL..LL........W",
+			"W.C..W............W..C.W",
+			"W....W..L......L..W....W",
+			"W..BB......WW......BB..W",
+			"W5.....C......C......6.W",
+			"WWWWWWWWWWWWWWWWWWWWWWWW",
+		],
+	},
+}
+
 const MODES := {
 	"ffa": {"name": "独狼乱斗", "desc": "6 人混战，3 分钟内击杀最多者获胜"},
 	"gems": {"name": "宝石争夺", "desc": "3v3 组队，夺取 10 颗宝石并坚守 15 秒"},

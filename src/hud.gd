@@ -11,6 +11,7 @@ var status_label: Label
 var feed_box: VBoxContainer
 var announce_label: Label
 var skill_btn: Button
+var ult_btn: Button
 var hp_bar: ProgressBar
 var hp_label: Label
 var stick_left: VirtualJoystick
@@ -98,6 +99,20 @@ func _ready() -> void:
 			G.player.want_skill = true)
 	root.add_child(skill_btn)
 
+	# —— 必杀按钮 ——
+	ult_btn = Button.new()
+	ult_btn.focus_mode = Control.FOCUS_NONE
+	_place(ult_btn, Control.PRESET_BOTTOM_RIGHT, -290, -342, 118, 118)
+	ult_btn.add_theme_font_size_override("font_size", 18)
+	ult_btn.add_theme_stylebox_override("normal", _panel_style(Color(0.62, 0.3, 0.95, 0.92), 58))
+	ult_btn.add_theme_stylebox_override("hover", _panel_style(Color(0.72, 0.4, 1.0, 0.96), 58))
+	ult_btn.add_theme_stylebox_override("pressed", _panel_style(Color(0.5, 0.22, 0.8, 0.96), 58))
+	ult_btn.add_theme_stylebox_override("disabled", _panel_style(Color(0.22, 0.18, 0.3, 0.8), 58))
+	ult_btn.pressed.connect(func():
+		if G.player != null and is_instance_valid(G.player):
+			G.player.want_ult = true)
+	root.add_child(ult_btn)
+
 	# —— 虚拟摇杆 ——
 	stick_left = VirtualJoystick.new()
 	_place(stick_left, Control.PRESET_BOTTOM_LEFT, 24, -254, 230, 230)
@@ -129,6 +144,15 @@ func _process(_delta: float) -> void:
 	else:
 		skill_btn.disabled = false
 		skill_btn.text = String(p.sdef["name"])
+	var pct := int(p.ult_charge * 100.0 / p.ULT_NEED)
+	if pct >= 100:
+		ult_btn.disabled = false
+		ult_btn.text = "%s\n就绪!" % p.udef["name"]
+		ult_btn.modulate = Color(1, 1, 1) * (1.0 + 0.15 * absf(sin(Time.get_ticks_msec() * 0.006)))
+	else:
+		ult_btn.disabled = true
+		ult_btn.text = "%s\n%d%%" % [p.udef["name"], pct]
+		ult_btn.modulate = Color(1, 1, 1)
 
 
 func set_gems(blue: int, red: int) -> void:

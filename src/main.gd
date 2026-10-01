@@ -11,6 +11,8 @@ func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.has("--gems"):
 		G.mode = "gems"
+	if args.has("--lava"):
+		G.map = "lava"
 	if args.has("--autostart") or args.has("--smoke"):
 		start_game()
 		if args.has("--smoke"):
@@ -20,7 +22,13 @@ func _ready() -> void:
 
 
 func _smoke() -> void:
-	await get_tree().create_timer(20.0).timeout
+	# 2 秒后给所有单位灌满必杀充能，覆盖大招代码路径
+	await get_tree().create_timer(2.0).timeout
+	if arena != null:
+		for u in arena.units:
+			if is_instance_valid(u):
+				u.add_ult_charge(Unit.ULT_NEED)
+	await get_tree().create_timer(18.0).timeout
 	print("SMOKE_OK kills_tracked=", arena.units.map(func(u): return u.kills))
 	get_tree().quit()
 
