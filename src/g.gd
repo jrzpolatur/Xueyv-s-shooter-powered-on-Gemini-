@@ -7,6 +7,7 @@ var loadout := {
 	"skill": "dash",
 	"item": "boots",
 }
+var mode := "ffa"
 var touch_mode := false
 var player: Node = null
 var sfx_cache := {}

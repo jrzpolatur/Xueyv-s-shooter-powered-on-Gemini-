@@ -10,6 +10,8 @@ func _ready() -> void:
 	collision_layer = 0
 	collision_mask = 2
 	z_index = 2
+	if kind == "gem":
+		add_to_group("gems")
 	var cs := CollisionShape2D.new()
 	var sh := CircleShape2D.new()
 	sh.radius = 26.0
@@ -31,6 +33,9 @@ func _on_body(body: Node2D) -> void:
 		return
 	if kind == "heal":
 		u.heal(40.0)
+	elif kind == "gem":
+		u.gems += 1
+		FX.damage_num(get_parent(), global_position + Vector2(0, -40), "宝石 +1", Color(0.45, 0.95, 0.9))
 	else:
 		u.cubes += 1
 		u.max_hp += Unit.CUBE_HP
@@ -51,6 +56,14 @@ func _draw() -> void:
 		draw_circle(Vector2(0, y), 14.0, Color(0.95, 1.0, 0.97))
 		draw_rect(Rect2(-7, y - 2.5, 14, 5), Color(0.2, 0.75, 0.35))
 		draw_rect(Rect2(-2.5, y - 7, 5, 14), Color(0.2, 0.75, 0.35))
+	elif kind == "gem":
+		draw_circle(Vector2(0, y), 20.0, Color(0.35, 0.95, 0.9, 0.3))
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(0, y - 14), Vector2(11, y), Vector2(0, y + 14), Vector2(-11, y),
+		]), Color(0.3, 0.9, 0.85))
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(0, y - 7), Vector2(5.5, y), Vector2(0, y + 7), Vector2(-5.5, y),
+		]), Color(0.8, 1.0, 0.98))
 	else:
 		draw_circle(Vector2(0, y), 20.0, Color(0.8, 0.5, 1.0, 0.25))
 		draw_set_transform(Vector2(0, y), PI / 4.0, Vector2.ONE)

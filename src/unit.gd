@@ -35,11 +35,21 @@ class InfoDraw:
 		if u.cubes > 0:
 			for i in range(u.cubes):
 				draw_circle(Vector2(-w / 2 + 5 + i * 10, y + h + 6), 3.5, Color(0.8, 0.5, 1.0))
+		if u.gems > 0:
+			for i in range(mini(u.gems, 12)):
+				var gx := -w / 2 + 5 + i * 9
+				var gy := y - 11
+				draw_colored_polygon(PackedVector2Array([
+					Vector2(gx, gy - 5), Vector2(gx + 4, gy), Vector2(gx, gy + 5), Vector2(gx - 4, gy),
+				]), Color(0.35, 0.95, 0.9))
 
 
 var arena: Node2D
 var display_name := "???"
 var is_player_unit := false
+var team := 0
+var rel_ally := false
+var gems := 0
 
 var wdef: Dictionary
 var sdef: Dictionary
@@ -52,6 +62,8 @@ var move_speed := BASE_SPEED
 var dmg_mult := 1.0
 var lifesteal := 0.0
 var cd_mult := 1.0
+var armor_mult := 1.0
+var rage_t := 0.0
 
 var kills := 0
 var deaths := 0
@@ -84,10 +96,11 @@ var name_label: Label
 var bob_t := 0.0
 
 
-func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: bool) -> void:
+func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: bool, p_team := 0) -> void:
 	arena = p_arena
 	display_name = p_name
 	is_player_unit = p_is_player
+	team = p_team
 	var cdef: Dictionary = Catalog.CHARS[p_loadout["chara"]]
 	wdef = Catalog.WEAPONS[p_loadout["weapon"]]
 	sdef = Catalog.SKILLS[p_loadout["skill"]]
@@ -99,6 +112,7 @@ func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: 
 	dmg_mult = float(idef.get("dmg_mult", 1.0))
 	lifesteal = float(idef.get("lifesteal", 0.0))
 	cd_mult = float(idef.get("cd_mult", 1.0))
+	armor_mult = float(idef.get("armor_mult", 1.0))
 	skill_cd_total = float(sdef["cd"]) * cd_mult
 
 	collision_layer = 2
@@ -124,7 +138,7 @@ func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: 
 	name_label = Label.new()
 	name_label.text = display_name
 	name_label.add_theme_font_size_override("font_size", 15)
-	name_label.add_theme_color_override("font_color", Color(1, 1, 1) if p_is_player else Color(1, 0.8, 0.8))
+	name_label.add_theme_color_override("font_color", Color(1, 1, 1))
 	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	name_label.add_theme_constant_override("outline_size", 5)
 	name_label.position = Vector2(-70, -158)
@@ -135,8 +149,25 @@ func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: 
 	add_child(name_label)
 
 
+func refresh_relation() -> void:
+	## 根据与玩家的阵营关系刷新配色（出生与换队时由 Arena 调用）
+	var viewer: Node = G.player
+	rel_ally = viewer != null and is_instance_valid(viewer) and viewer != self \
+		and viewer.get("team") == team
+	if is_player_unit:
+		name_label.add_theme_color_override("font_color", Color(1, 0.95, 0.6))
+	elif rel_ally:
+		name_label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	else:
+		name_label.add_theme_color_override("font_color", Color(1, 0.75, 0.75))
+
+
 func total_dmg_mult() -> float:
 	return dmg_mult * (1.0 + CUBE_DMG * cubes)
+
+
+func is_enemy_of(u: Unit) -> bool:
+	return u != null and u != self and u.team != team
 
 
 func is_hidden() -> bool:
@@ -151,6 +182,7 @@ func _physics_process(delta: float) -> void:
 	invuln_t = maxf(0.0, invuln_t - delta)
 	reveal_t = maxf(0.0, reveal_t - delta)
 	dash_t = maxf(0.0, dash_t - delta)
+	rage_t = maxf(0.0, rage_t - delta)
 	if shield > 0.0:
 		shield_t -= delta
 		if shield_t <= 0.0:
@@ -162,7 +194,8 @@ func _physics_process(delta: float) -> void:
 	if dash_t > 0.0:
 		velocity = dash_dir * 950.0
 	else:
-		velocity = move_input.limit_length(1.0) * move_speed + kb_vel
+		var spd := move_speed * (1.25 if rage_t > 0.0 else 1.0)
+		velocity = move_input.limit_length(1.0) * spd + kb_vel
 	kb_vel = kb_vel.move_toward(Vector2.ZERO, 1400.0 * delta)
 	move_and_slide()
 
@@ -212,15 +245,21 @@ func _draw() -> void:
 	# 脚下阴影 + 阵营圈
 	draw_set_transform(Vector2(0, 4), 0.0, Vector2(1.0, 0.5))
 	draw_circle(Vector2.ZERO, 26.0, Color(0, 0, 0, 0.22))
-	var ring_col := Color(1, 1, 1, 0.75) if is_player_unit else Color(1, 0.4, 0.4, 0.45)
+	var ring_col := Color(1, 0.4, 0.4, 0.45)
+	if is_player_unit:
+		ring_col = Color(1, 0.95, 0.5, 0.85)
+	elif rel_ally:
+		ring_col = Color(0.5, 0.85, 1.0, 0.7)
 	draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 32, ring_col, 3.0)
+	if rage_t > 0.0:
+		draw_arc(Vector2.ZERO, 36.0, 0.0, TAU, 32, Color(1, 0.25, 0.2, 0.8), 3.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if is_player_unit and sprite != null and sprite.visible:
 		draw_line(aim_dir * 40.0, aim_dir * 170.0, Color(1, 1, 1, 0.18), 4.0)
 
 
 func fire() -> void:
-	fire_cd = float(wdef["interval"])
+	fire_cd = float(wdef["interval"]) * (0.6 if rage_t > 0.0 else 1.0)
 	reveal_t = 1.0
 	invuln_t = minf(invuln_t, 0.1)
 	var n := int(wdef["pellets"])
@@ -258,7 +297,7 @@ func use_skill() -> void:
 			if arena.has_method("add_shake"):
 				arena.add_shake(8.0)
 			for u in arena.get("units"):
-				if u == self or not is_instance_valid(u) or not u.alive:
+				if u == self or not is_instance_valid(u) or not u.alive or u.team == team:
 					continue
 				var dist: float = u.global_position.distance_to(global_position)
 				if dist <= 160.0:
@@ -274,12 +313,16 @@ func use_skill() -> void:
 			shield = 60.0
 			shield_t = 3.0
 			FX.ring(arena, global_position, 60.0, Color(0.55, 0.8, 1.0), 0.4)
+		"rage":
+			rage_t = 4.0
+			FX.ring(arena, global_position, 70.0, Color(1, 0.25, 0.2), 0.4, true)
+			FX.burst(arena, global_position, Color(1, 0.3, 0.25), 16, 300.0)
 
 
 func take_damage(amount: float, source: Unit) -> void:
 	if not alive or invuln_t > 0.0:
 		return
-	var a := amount
+	var a := amount * armor_mult
 	if shield > 0.0:
 		var absorbed := minf(shield, a)
 		shield -= absorbed

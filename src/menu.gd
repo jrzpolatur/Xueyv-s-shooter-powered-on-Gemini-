@@ -47,6 +47,33 @@ func _ready() -> void:
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(sub)
 
+	# —— 模式选择 ——
+	var mode_row := HBoxContainer.new()
+	mode_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	mode_row.add_theme_constant_override("separation", 14)
+	center.add_child(mode_row)
+	var mode_group := ButtonGroup.new()
+	var mode_desc := Label.new()
+	for key in Catalog.MODES:
+		var mdef: Dictionary = Catalog.MODES[key]
+		var mbtn := _opt_button(String(mdef["name"]), mode_group)
+		mbtn.custom_minimum_size = Vector2(220, 46)
+		mbtn.add_theme_font_size_override("font_size", 20)
+		mbtn.button_pressed = (G.mode == key)
+		mbtn.toggled.connect(func(on: bool):
+			if on:
+				G.mode = key
+				mode_desc.text = String(mdef["desc"])
+				G.play_sfx("ui"))
+		mode_row.add_child(mbtn)
+	mode_desc.text = String(Catalog.MODES[G.mode]["desc"])
+	mode_desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mode_desc.add_theme_font_size_override("font_size", 15)
+	mode_desc.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0))
+	mode_desc.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	mode_desc.add_theme_constant_override("outline_size", 4)
+	center.add_child(mode_desc)
+
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 14)
 	cols.alignment = BoxContainer.ALIGNMENT_CENTER

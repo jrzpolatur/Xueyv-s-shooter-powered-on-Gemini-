@@ -9,6 +9,8 @@ var arena: Arena
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
+	if args.has("--gems"):
+		G.mode = "gems"
 	if args.has("--autostart") or args.has("--smoke"):
 		start_game()
 		if args.has("--smoke"):

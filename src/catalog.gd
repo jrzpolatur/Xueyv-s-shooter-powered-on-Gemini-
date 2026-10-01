@@ -41,6 +41,22 @@ const WEAPONS := {
 		"color": Color(1.0, 0.54, 0.36), "sfx": "lob", "shake": 3.0,
 		"desired_range": 320.0,
 	},
+	"wave": {
+		"name": "狂澜波刃", "desc": "挥出巨大的能量波，贯穿一切敌人。",
+		"damage": 17.0, "interval": 0.6, "speed": 520.0, "range": 340.0,
+		"pellets": 1, "spread": 1.0, "size": 20.0,
+		"pierce": true, "arc": false, "aoe": 0.0,
+		"color": Color(0.4, 1.0, 0.85), "sfx": "shot3", "shake": 4.0,
+		"desired_range": 230.0,
+	},
+	"swarm": {
+		"name": "蜂群飞弹", "desc": "连射 3 枚自动追踪的小飞弹。",
+		"damage": 7.5, "interval": 0.72, "speed": 640.0, "range": 540.0,
+		"pellets": 3, "spread": 14.0, "size": 6.0,
+		"pierce": false, "arc": false, "aoe": 0.0, "homing": true,
+		"color": Color(1.0, 0.55, 0.85), "sfx": "shot1", "shake": 2.0,
+		"desired_range": 390.0,
+	},
 }
 
 const SKILLS := {
@@ -51,10 +67,13 @@ const SKILLS := {
 		"id": "nova", "name": "烈焰新星", "desc": "以自身为中心爆发烈焰并击退敌人。", "cd": 9.0,
 	},
 	"heal": {
-		"id": "heal", "name": "治愈领域", "desc": "放置治疗法阵，站在其中持续回血。", "cd": 11.0,
+		"id": "heal", "name": "治愈领域", "desc": "放置治疗法阵，我方站入持续回血。", "cd": 11.0,
 	},
 	"shield": {
 		"id": "shield", "name": "星光护盾", "desc": "展开吸收 60 伤害的护盾，持续 3 秒。", "cd": 10.0,
+	},
+	"rage": {
+		"id": "rage", "name": "血怒觉醒", "desc": "4 秒内射速 +65%、移速 +25%。", "cd": 10.0,
 	},
 }
 
@@ -64,6 +83,12 @@ const ITEMS := {
 	"amulet": {"name": "生命护符", "desc": "最大生命 +30%", "hp_mult": 1.3},
 	"fang": {"name": "吸血之牙", "desc": "造成伤害的 12% 转化为生命", "lifesteal": 0.12},
 	"watch": {"name": "时光怀表", "desc": "技能冷却 -30%", "cd_mult": 0.7},
+	"armor": {"name": "重甲核心", "desc": "受到的伤害 -15%", "armor_mult": 0.85},
 }
 
-const BOT_NAMES := ["小樱", "凯", "雪乃", "阿岚", "美羽"]
+const BOT_NAMES := ["小樱", "凯", "雪乃", "阿岚", "美羽", "千夏", "隼人"]
+
+const MODES := {
+	"ffa": {"name": "独狼乱斗", "desc": "6 人混战，3 分钟内击杀最多者获胜"},
+	"gems": {"name": "宝石争夺", "desc": "3v3 组队，夺取 10 颗宝石并坚守 15 秒"},
+}

@@ -5,6 +5,9 @@ extends CanvasLayer
 var root: Control
 var time_label: Label
 var score_label: Label
+var gem_blue_label: Label
+var gem_red_label: Label
+var status_label: Label
 var feed_box: VBoxContainer
 var announce_label: Label
 var skill_btn: Button
@@ -13,6 +16,7 @@ var hp_label: Label
 var stick_left: VirtualJoystick
 var stick_right: VirtualJoystick
 var results_layer: Control
+var gem_mode := false
 
 
 func _ready() -> void:
@@ -36,8 +40,21 @@ func _ready() -> void:
 	top.add_child(top_box)
 	time_label = _mk_label("3:00", 26, Color(1, 1, 1))
 	score_label = _mk_label("击杀 0", 20, Color(1, 0.9, 0.55))
-	top_box.add_child(time_label)
+	gem_blue_label = _mk_label("◆ 0", 24, Color(0.5, 0.85, 1.0))
+	gem_red_label = _mk_label("0 ◆", 24, Color(1, 0.5, 0.5))
+	if gem_mode:
+		top_box.add_child(gem_blue_label)
+		top_box.add_child(time_label)
+		top_box.add_child(gem_red_label)
+	else:
+		top_box.add_child(time_label)
 	top_box.add_child(score_label)
+
+	# —— 状态栏（夺冠倒计时等）——
+	status_label = _mk_label("", 24, Color(1, 0.9, 0.4))
+	_place(status_label, Control.PRESET_CENTER_TOP, -300, 66, 600, 36)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	root.add_child(status_label)
 
 	# —— 击杀播报 ——
 	feed_box = VBoxContainer.new()
@@ -102,13 +119,25 @@ func _process(_delta: float) -> void:
 	hp_bar.max_value = p.max_hp
 	hp_bar.value = p.hp
 	hp_label.text = "HP %d / %d" % [int(p.hp), int(p.max_hp)]
-	score_label.text = "击杀 %d" % p.kills
+	if gem_mode:
+		score_label.text = "◆%d · 击杀 %d" % [p.gems, p.kills]
+	else:
+		score_label.text = "击杀 %d" % p.kills
 	if p.skill_cd > 0.0:
 		skill_btn.disabled = true
 		skill_btn.text = "%s\n%.1f" % [p.sdef["name"], p.skill_cd]
 	else:
 		skill_btn.disabled = false
 		skill_btn.text = String(p.sdef["name"])
+
+
+func set_gems(blue: int, red: int) -> void:
+	gem_blue_label.text = "蓝 ◆ %d" % blue
+	gem_red_label.text = "%d ◆ 红" % red
+
+
+func set_status(text: String) -> void:
+	status_label.text = text
 
 
 func set_time(t: float) -> void:
@@ -140,7 +169,7 @@ func announce(text: String, dur := 1.4) -> void:
 	tw.tween_property(announce_label, "modulate:a", 0.0, 0.4)
 
 
-func show_results(ranking: Array, on_restart: Callable, on_menu: Callable) -> void:
+func show_results(title_text: String, lines: Array, on_restart: Callable, on_menu: Callable) -> void:
 	results_layer = Control.new()
 	results_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(results_layer)
@@ -160,14 +189,12 @@ func show_results(ranking: Array, on_restart: Callable, on_menu: Callable) -> vo
 	box.custom_minimum_size = Vector2(420, 0)
 	panel.add_child(box)
 
-	var title := _mk_label("— 战斗结束 —", 34, Color(1, 0.85, 0.4))
+	var title := _mk_label(title_text, 34, Color(1, 0.85, 0.4))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
-	for i in range(ranking.size()):
-		var u: Node = ranking[i]
-		var medal: String = ["①", "②", "③", "④", "⑤", "⑥"][mini(i, 5)]
-		var row := _mk_label("%s  %s — %d 击杀 / %d 阵亡" % [medal, u.display_name, u.kills, u.deaths],
-			22, Color(1, 1, 0.7) if u.is_player_unit else Color(0.9, 0.9, 0.95))
+	for line in lines:
+		var row := _mk_label(String(line["text"]), 22,
+			Color(1, 1, 0.7) if bool(line["highlight"]) else Color(0.9, 0.9, 0.95))
 		box.add_child(row)
 
 	var btn_row := HBoxContainer.new()

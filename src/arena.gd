@@ -1,12 +1,15 @@
 class_name Arena
 extends Node2D
-## 竞技场：地图构建、生成玩家与 AI、比赛计时与结算、相机跟随与震屏。
+## 竞技场：地图构建、模式逻辑（独狼乱斗 / 宝石争夺）、比赛结算、相机。
 
 signal restart_requested
 signal menu_requested
 
 const TILE := 100.0
-const MATCH_TIME := 180.0
+const FFA_TIME := 180.0
+const GEMS_TIME := 240.0
+const GEM_TARGET := 10
+const GEM_WIN_HOLD := 15.0
 # 地图：W=墙 B=草丛 C=箱子 1-6=出生点 .=地面（行自动补齐，边界强制为墙）
 const MAP := [
 	"WWWWWWWWWWWWWWWWWWWWWWWW",
@@ -25,14 +28,20 @@ const MAP := [
 	"W5....B........B.....6.W",
 	"WWWWWWWWWWWWWWWWWWWWWWWW",
 ]
+# 宝石产出点（避开中央墙体的空地）
+const GEM_SPOTS := [
+	Vector2(1200, 550), Vector2(1200, 950), Vector2(950, 750), Vector2(1450, 750),
+]
 
+var mode := "ffa"
 var world: Node2D
 var bush_layer: Node2D
 var camera: Camera2D
 var hud: HUD
 var units: Array = []
-var spawn_points: Array = []
-var time_left := MATCH_TIME
+var spawn_points: Array = []        # 全部出生点（FFA 用）
+var team_spawns := {0: [], 1: []}   # 左列=0 / 右列=1（宝石模式用）
+var time_left := FFA_TIME
 var shake := 0.0
 var match_over := false
 var map_w := 24
@@ -40,8 +49,16 @@ var map_h := 15
 var wall_tex: Texture2D
 var bush_tex: Texture2D
 
+# —— 宝石模式状态 ——
+var gem_timer := 3.0
+var gems_spawned := 0
+var winning_team := -1
+var win_countdown := 0.0
+
 
 func _ready() -> void:
+	mode = G.mode
+	time_left = GEMS_TIME if mode == "gems" else FFA_TIME
 	map_h = MAP.size()
 	wall_tex = load("res://assets/img/wall.png")
 	bush_tex = load("res://assets/img/bush.png")
@@ -79,8 +96,12 @@ func _ready() -> void:
 	camera.make_current()
 
 	hud = HUD.new()
+	hud.gem_mode = mode == "gems"
 	add_child(hud)
-	hud.announce("战斗开始！", 1.2)
+	if mode == "gems":
+		hud.announce("宝石争夺！收集 %d 颗宝石并坚守！" % GEM_TARGET, 1.6)
+	else:
+		hud.announce("战斗开始！", 1.2)
 	G.play_sfx("start")
 
 
@@ -103,8 +124,12 @@ func _build_map() -> void:
 					var c := Crate.new()
 					world.add_child(c)
 					c.global_position = pos
-				"1", "2", "3", "4", "5", "6":
+				"1", "3", "5":
 					spawn_points.append(pos)
+					team_spawns[0].append(pos)
+				"2", "4", "6":
+					spawn_points.append(pos)
+					team_spawns[1].append(pos)
 
 
 func _add_wall(pos: Vector2) -> void:
@@ -149,36 +174,76 @@ func _add_bush(pos: Vector2) -> void:
 
 
 func _spawn_units() -> void:
-	var points := spawn_points.duplicate()
-	points.shuffle()
-	if points.is_empty():
-		points = [Vector2(300, 300)]
-
-	var player := Player.new()
-	world.add_child(player)
-	player.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true)
-	player.global_position = points[0]
-	player.died.connect(_on_unit_died)
-	units.append(player)
-	G.player = player
-
 	var char_keys := Catalog.CHARS.keys()
 	var weapon_keys := Catalog.WEAPONS.keys()
 	var skill_keys := Catalog.SKILLS.keys()
 	var item_keys := Catalog.ITEMS.keys()
-	for i in range(5):
-		var bot := Bot.new()
-		world.add_child(bot)
-		var lo := {
-			"chara": char_keys.pick_random(),
-			"weapon": weapon_keys.pick_random(),
-			"skill": skill_keys.pick_random(),
-			"item": item_keys.pick_random(),
-		}
-		bot.setup(self, lo, Catalog.BOT_NAMES[i % Catalog.BOT_NAMES.size()], false)
-		bot.global_position = points[(i + 1) % points.size()]
-		bot.died.connect(_on_unit_died)
-		units.append(bot)
+	var bot_names := Catalog.BOT_NAMES.duplicate()
+	bot_names.shuffle()
+
+	if mode == "gems":
+		# 3v3：玩家 + 2 队友 (队伍0) vs 3 敌人 (队伍1)
+		var home: Array = team_spawns[0].duplicate()
+		home.shuffle()
+		var away: Array = team_spawns[1].duplicate()
+		away.shuffle()
+
+		var player := Player.new()
+		world.add_child(player)
+		player.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
+		player.global_position = home[0]
+		player.died.connect(_on_unit_died)
+		units.append(player)
+		G.player = player
+
+		for i in range(5):
+			var bot := Bot.new()
+			world.add_child(bot)
+			var lo := {
+				"chara": char_keys.pick_random(),
+				"weapon": weapon_keys.pick_random(),
+				"skill": skill_keys.pick_random(),
+				"item": item_keys.pick_random(),
+			}
+			var bteam := 0 if i < 2 else 1
+			bot.setup(self, lo, bot_names[i], false, bteam)
+			if bteam == 0:
+				bot.global_position = home[(i + 1) % home.size()]
+			else:
+				bot.global_position = away[(i - 2) % away.size()]
+			bot.died.connect(_on_unit_died)
+			units.append(bot)
+	else:
+		# FFA：每人独立队伍
+		var points := spawn_points.duplicate()
+		points.shuffle()
+		if points.is_empty():
+			points = [Vector2(300, 300)]
+
+		var player2 := Player.new()
+		world.add_child(player2)
+		player2.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
+		player2.global_position = points[0]
+		player2.died.connect(_on_unit_died)
+		units.append(player2)
+		G.player = player2
+
+		for i in range(5):
+			var bot2 := Bot.new()
+			world.add_child(bot2)
+			var lo2 := {
+				"chara": char_keys.pick_random(),
+				"weapon": weapon_keys.pick_random(),
+				"skill": skill_keys.pick_random(),
+				"item": item_keys.pick_random(),
+			}
+			bot2.setup(self, lo2, bot_names[i], false, i + 1)
+			bot2.global_position = points[(i + 1) % points.size()]
+			bot2.died.connect(_on_unit_died)
+			units.append(bot2)
+
+	for u in units:
+		u.refresh_relation()
 
 
 func _process(delta: float) -> void:
@@ -190,8 +255,66 @@ func _process(delta: float) -> void:
 		camera.position = G.player.global_position
 	shake = maxf(0.0, shake - 40.0 * delta) * exp(-6.0 * delta)
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
-	if time_left <= 0.0:
-		_end_match()
+
+	if mode == "gems":
+		_process_gems(delta)
+		if time_left <= 0.0:
+			var b := team_gems(0)
+			var r := team_gems(1)
+			if b == r:
+				_end_match(-1)
+			else:
+				_end_match(0 if b > r else 1)
+	else:
+		if time_left <= 0.0:
+			_end_match(-1)
+
+
+func _process_gems(delta: float) -> void:
+	# 产出宝石
+	if gems_spawned < 22:
+		gem_timer -= delta
+		if gem_timer <= 0.0:
+			gem_timer = 6.0
+			gems_spawned += 1
+			var spot: Vector2 = GEM_SPOTS[randi() % GEM_SPOTS.size()]
+			spot += Vector2(randf_range(-40, 40), randf_range(-40, 40))
+			spawn_pickup(spot, "gem")
+			FX.ring(self, spot, 50.0, Color(0.35, 0.95, 0.9), 0.5)
+			G.play_sfx("pickup", spot, -10.0)
+
+	var blue := team_gems(0)
+	var red := team_gems(1)
+	hud.set_gems(blue, red)
+
+	var leader := -1
+	if blue >= GEM_TARGET and blue >= red:
+		leader = 0
+	elif red >= GEM_TARGET and red > blue:
+		leader = 1
+
+	if leader == -1:
+		if winning_team != -1:
+			winning_team = -1
+			hud.set_status("")
+	else:
+		if winning_team != leader:
+			winning_team = leader
+			win_countdown = GEM_WIN_HOLD
+			hud.announce("%s即将获胜！" % ("蓝队" if leader == 0 else "红队"), 1.2)
+		win_countdown -= delta
+		var tname := "蓝队" if leader == 0 else "红队"
+		hud.set_status("%s 坚守中… %d" % [tname, int(ceilf(win_countdown))])
+		if win_countdown <= 0.0:
+			_end_match(leader)
+
+
+func team_gems(t: int) -> int:
+	var total := 0
+	for u in units:
+		if is_instance_valid(u) and u.team == t:
+			total += u.gems
+	return total
 
 
 func add_shake(s: float) -> void:
@@ -236,6 +359,14 @@ func _on_unit_died(unit: Unit, killer: Unit) -> void:
 			hud.killfeed("%s 击败了 %s" % [killer.display_name, unit.display_name])
 	if unit.is_player_unit:
 		add_shake(10.0)
+	# 宝石模式：死亡掉落全部宝石
+	if mode == "gems" and unit.gems > 0:
+		var n: int = unit.gems
+		unit.gems = 0
+		for i in range(n):
+			var ang := TAU * float(i) / float(n) + randf_range(-0.3, 0.3)
+			var dist := randf_range(30.0, 85.0)
+			spawn_pickup(unit.global_position + Vector2.from_angle(ang) * dist, "gem")
 	if match_over:
 		return
 	var t := get_tree().create_timer(2.5)
@@ -246,12 +377,15 @@ func _on_unit_died(unit: Unit, killer: Unit) -> void:
 
 
 func _best_spawn(unit: Unit) -> Vector2:
+	var candidates: Array = spawn_points
+	if mode == "gems":
+		candidates = team_spawns[unit.team]
 	var best := Vector2(TILE * 2, TILE * 2)
 	var best_score := -1.0
-	for p in spawn_points:
+	for p in candidates:
 		var min_d := 99999.0
 		for u in units:
-			if u == unit or not is_instance_valid(u) or not u.alive:
+			if u == unit or not is_instance_valid(u) or not u.alive or u.team == unit.team:
 				continue
 			min_d = minf(min_d, (p as Vector2).distance_to(u.global_position))
 		if min_d > best_score:
@@ -260,18 +394,49 @@ func _best_spawn(unit: Unit) -> Vector2:
 	return best
 
 
-func _end_match() -> void:
+func _end_match(winner := -1) -> void:
 	match_over = true
+	hud.set_status("")
+	var title := ""
 	var ranking := units.duplicate()
-	ranking.sort_custom(func(a, b):
-		if a.kills == b.kills:
-			return a.deaths < b.deaths
-		return a.kills > b.kills)
-	var player_rank := ranking.find(G.player) + 1
-	hud.announce("时间到！你排名第 %d" % player_rank, 2.0)
+	if mode == "gems":
+		ranking.sort_custom(func(a, b):
+			if a.gems == b.gems:
+				return a.kills > b.kills
+			return a.gems > b.gems)
+		if winner == -1:
+			title = "平局！"
+			hud.announce("时间到，平局！", 2.0)
+		elif winner == G.player.team:
+			title = "胜 利 ！"
+			hud.announce("蓝队胜利！", 2.0)
+		else:
+			title = "惜 败 …"
+			hud.announce("红队获得了宝石…", 2.0)
+	else:
+		ranking.sort_custom(func(a, b):
+			if a.kills == b.kills:
+				return a.deaths < b.deaths
+			return a.kills > b.kills)
+		var player_rank := ranking.find(G.player) + 1
+		title = "— 战斗结束 —"
+		hud.announce("时间到！你排名第 %d" % player_rank, 2.0)
 	G.play_sfx("death", null, -6.0)
+
+	var lines: Array = []
+	for i in range(ranking.size()):
+		var u: Node = ranking[i]
+		var medal: String = ["①", "②", "③", "④", "⑤", "⑥"][mini(i, 5)]
+		var text := ""
+		if mode == "gems":
+			var side := "蓝" if u.team == G.player.team else "红"
+			text = "%s [%s] %s — 宝石×%d / %d 击杀" % [medal, side, u.display_name, u.gems, u.kills]
+		else:
+			text = "%s  %s — %d 击杀 / %d 阵亡" % [medal, u.display_name, u.kills, u.deaths]
+		lines.append({"text": text, "highlight": u.is_player_unit})
+
 	get_tree().paused = true
-	hud.show_results(ranking,
+	hud.show_results(title, lines,
 		func():
 			get_tree().paused = false
 			restart_requested.emit(),

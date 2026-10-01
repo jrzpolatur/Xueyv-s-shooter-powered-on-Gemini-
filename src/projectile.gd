@@ -19,6 +19,7 @@ var col := Color.WHITE
 var psize := 7.0
 var hit_set := {}
 var done := false
+var homing := false
 
 
 func setup(p_shooter: Unit, p_pos: Vector2, p_dir: Vector2, p_wdef: Dictionary, p_aim_point: Vector2) -> void:
@@ -31,6 +32,7 @@ func setup(p_shooter: Unit, p_pos: Vector2, p_dir: Vector2, p_wdef: Dictionary, 
 	pierce = bool(wdef["pierce"])
 	arc = bool(wdef["arc"])
 	aoe = float(wdef["aoe"])
+	homing = bool(wdef.get("homing", false))
 	col = wdef["color"]
 	psize = float(wdef["size"])
 	global_position = p_pos
@@ -63,6 +65,8 @@ func _physics_process(delta: float) -> void:
 		if t >= 1.0:
 			_explode()
 	else:
+		if homing:
+			_steer_homing(delta)
 		var step := dir * speed * delta
 		global_position += step
 		traveled += step.length()
@@ -73,12 +77,35 @@ func _physics_process(delta: float) -> void:
 				queue_free()
 
 
+func _steer_homing(delta: float) -> void:
+	if shooter == null or not is_instance_valid(shooter) or shooter.arena == null:
+		return
+	var best: Node2D = null
+	var best_d := 300.0
+	for u in shooter.arena.get("units"):
+		if not is_instance_valid(u) or not u.alive or u == shooter or u.team == shooter.team:
+			continue
+		if u.is_hidden():
+			continue
+		var d: float = global_position.distance_to(u.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != null:
+		var desired := (best.global_position - global_position).normalized()
+		var diff := dir.angle_to(desired)
+		dir = dir.rotated(clampf(diff, -5.5 * delta, 5.5 * delta))
+		rotation = dir.angle()
+
+
 func _on_body(body: Node2D) -> void:
 	if done or body == shooter:
 		return
 	if body is Unit:
 		var u := body as Unit
 		if not u.alive or hit_set.has(u):
+			return
+		if shooter != null and is_instance_valid(shooter) and u.team == shooter.team:
 			return
 		hit_set[u] = true
 		if aoe > 0.0:
@@ -127,6 +154,9 @@ func _explode() -> void:
 	for r in res:
 		var c: Object = r["collider"]
 		if c == shooter:
+			continue
+		if c is Unit and shooter != null and is_instance_valid(shooter) \
+				and (c as Unit).team == shooter.team:
 			continue
 		if c is Unit and (c as Unit).alive:
 			(c as Unit).take_damage(damage, shooter)

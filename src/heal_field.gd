@@ -14,9 +14,12 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	life -= delta
 	queue_redraw()
-	if owner_unit != null and is_instance_valid(owner_unit) and owner_unit.alive \
-			and owner_unit.global_position.distance_to(global_position) <= radius:
-		owner_unit.heal(14.0 * delta, false)
+	if owner_unit != null and is_instance_valid(owner_unit) and owner_unit.arena != null:
+		for u in owner_unit.arena.get("units"):
+			if not is_instance_valid(u) or not u.alive or u.team != owner_unit.team:
+				continue
+			if u.global_position.distance_to(global_position) <= radius:
+				u.heal(14.0 * delta, false)
 	if life <= 0.0:
 		queue_free()
 
