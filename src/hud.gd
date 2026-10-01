@@ -18,6 +18,45 @@ var stick_left: VirtualJoystick
 var stick_right: VirtualJoystick
 var results_layer: Control
 var gem_mode := false
+var boss_mode := false
+var boss_bar: ProgressBar
+var boss_label: Label
+var vignette: Vignette
+var upgrade_panel: PanelContainer
+var upgrade_btns: Array = []
+var upgrade_queue: Array = []
+var upgrade_options: Array = []
+var upgrade_open := false
+
+
+class Vignette extends Control:
+	## 低血量红色警示边框
+	var strength := 0.0
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _process(_d: float) -> void:
+		queue_redraw()
+
+	func _draw() -> void:
+		if strength <= 0.01:
+			return
+		var pulse := 0.7 + 0.3 * absf(sin(Time.get_ticks_msec() * 0.005))
+		var a := strength * pulse
+		var s := size
+		var th := 110.0
+		var col := Color(0.9, 0.05, 0.05)
+		# 四条渐变边
+		draw_rect(Rect2(0, 0, s.x, th), Color(col, 0.0), true)
+		for i in range(8):
+			var f := 1.0 - i / 8.0
+			var aa := a * 0.09 * f
+			var t := th * (i + 1) / 8.0
+			draw_rect(Rect2(0, 0, s.x, t), Color(col, aa), true)
+			draw_rect(Rect2(0, s.y - t, s.x, t), Color(col, aa), true)
+			draw_rect(Rect2(0, 0, t, s.y), Color(col, aa), true)
+			draw_rect(Rect2(s.x - t, 0, t, s.y), Color(col, aa), true)
 
 
 func _ready() -> void:
@@ -123,6 +162,59 @@ func _ready() -> void:
 	stick_right.accent = Color(1.0, 0.6, 0.5)
 	root.add_child(stick_right)
 
+	# —— 低血量警示边框 ——
+	vignette = Vignette.new()
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(vignette)
+	root.move_child(vignette, 0)
+
+	# —— Boss 血条 ——
+	if boss_mode:
+		var bbox := VBoxContainer.new()
+		_place(bbox, Control.PRESET_CENTER_TOP, -310, 70, 620, 60)
+		bbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(bbox)
+		boss_label = _mk_label("魔王·雪烬", 18, Color(1, 0.6, 0.9))
+		boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		bbox.add_child(boss_label)
+		boss_bar = ProgressBar.new()
+		boss_bar.custom_minimum_size = Vector2(620, 20)
+		boss_bar.show_percentage = false
+		boss_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		boss_bar.add_theme_stylebox_override("background", _panel_style(Color(0, 0, 0, 0.55), 10))
+		boss_bar.add_theme_stylebox_override("fill", _panel_style(Color(0.85, 0.2, 0.45, 0.95), 10))
+		bbox.add_child(boss_bar)
+
+	# —— 强化三选一面板 ——
+	upgrade_panel = PanelContainer.new()
+	_place(upgrade_panel, Control.PRESET_CENTER_BOTTOM, -352, -400, 704, 150)
+	upgrade_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.08, 0.07, 0.16, 0.92), 16))
+	upgrade_panel.visible = false
+	root.add_child(upgrade_panel)
+	var uv := VBoxContainer.new()
+	uv.add_theme_constant_override("separation", 8)
+	upgrade_panel.add_child(uv)
+	var utitle := _mk_label("升 级 ！选择一项强化（按 1 / 2 / 3）", 20, Color(1, 0.85, 0.4))
+	utitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	uv.add_child(utitle)
+	var urow := HBoxContainer.new()
+	urow.alignment = BoxContainer.ALIGNMENT_CENTER
+	urow.add_theme_constant_override("separation", 14)
+	uv.add_child(urow)
+	for i in range(3):
+		var btn := Button.new()
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.custom_minimum_size = Vector2(216, 92)
+		btn.add_theme_font_size_override("font_size", 18)
+		btn.add_theme_stylebox_override("normal", _panel_style(Color(0.16, 0.2, 0.36, 0.95), 12))
+		btn.add_theme_stylebox_override("hover", _panel_style(Color(0.26, 0.34, 0.56, 0.98), 12))
+		btn.add_theme_stylebox_override("pressed", _panel_style(Color(0.1, 0.12, 0.24, 0.98), 12))
+		var idx := i
+		btn.pressed.connect(func():
+			_pick_upgrade(idx))
+		urow.add_child(btn)
+		upgrade_btns.append(btn)
+
 
 func _process(_delta: float) -> void:
 	var touch := G.touch_mode
@@ -134,6 +226,10 @@ func _process(_delta: float) -> void:
 	hp_bar.max_value = p.max_hp
 	hp_bar.value = p.hp
 	hp_label.text = "HP %d / %d" % [int(p.hp), int(p.max_hp)]
+	if p.alive and p.hp < p.max_hp * 0.35:
+		vignette.strength = clampf(1.0 - p.hp / (p.max_hp * 0.35), 0.25, 1.0)
+	else:
+		vignette.strength = 0.0
 	if gem_mode:
 		score_label.text = "◆%d · 击杀 %d" % [p.gems, p.kills]
 	else:
@@ -153,6 +249,59 @@ func _process(_delta: float) -> void:
 		ult_btn.disabled = true
 		ult_btn.text = "%s\n%d%%" % [p.udef["name"], pct]
 		ult_btn.modulate = Color(1, 1, 1)
+
+
+func set_boss_hp(hp: float, max_hp: float) -> void:
+	if boss_bar == null:
+		return
+	boss_bar.max_value = max_hp
+	boss_bar.value = hp
+	boss_label.text = "魔王·雪烬  %d / %d" % [int(maxf(hp, 0)), int(max_hp)]
+
+
+func offer_upgrades(options: Array) -> void:
+	if upgrade_open:
+		upgrade_queue.append(options)
+		return
+	_show_upgrade_panel(options)
+
+
+func _show_upgrade_panel(options: Array) -> void:
+	upgrade_open = true
+	upgrade_options = options
+	for i in range(3):
+		var key: String = options[i]
+		var u: Dictionary = Catalog.UPGRADES[key]
+		upgrade_btns[i].text = "%d. %s\n%s" % [i + 1, u["name"], u["desc"]]
+	upgrade_panel.visible = true
+	G.play_sfx("pickup", null, -4.0)
+
+
+func _pick_upgrade(idx: int) -> void:
+	if not upgrade_open or idx < 0 or idx >= upgrade_options.size():
+		return
+	upgrade_panel.visible = false
+	upgrade_open = false
+	if G.player != null and is_instance_valid(G.player):
+		G.player.apply_upgrade(upgrade_options[idx])
+		G.play_sfx("ui")
+	if not upgrade_queue.is_empty():
+		_show_upgrade_panel(upgrade_queue.pop_front())
+
+
+func _input(event: InputEvent) -> void:
+	if not upgrade_open or not event is InputEventKey:
+		return
+	var k := event as InputEventKey
+	if not k.pressed or k.echo:
+		return
+	match k.keycode:
+		KEY_1, KEY_KP_1:
+			_pick_upgrade(0)
+		KEY_2, KEY_KP_2:
+			_pick_upgrade(1)
+		KEY_3, KEY_KP_3:
+			_pick_upgrade(2)
 
 
 func set_gems(blue: int, red: int) -> void:

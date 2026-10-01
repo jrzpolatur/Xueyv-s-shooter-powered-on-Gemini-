@@ -13,6 +13,8 @@ func _ready() -> void:
 		G.mode = "gems"
 	if args.has("--lava"):
 		G.map = "lava"
+	if args.has("--boss"):
+		G.mode = "boss"
 	if args.has("--autostart") or args.has("--smoke"):
 		start_game()
 		if args.has("--smoke"):
@@ -28,13 +30,21 @@ func _smoke() -> void:
 		for u in arena.units:
 			if is_instance_valid(u):
 				u.add_ult_charge(Unit.ULT_NEED)
+		# 覆盖强化面板 / 键选 / 慢动作代码路径
+		arena.hud.offer_upgrades(["dmg", "hp", "speed"])
+		arena.hud.offer_upgrades(["firerate", "cdr", "ultgain"])
+		arena.hud._pick_upgrade(1)
+		arena.hud._pick_upgrade(2)
+		arena._slowmo(0.3, 0.1)
 	await get_tree().create_timer(18.0).timeout
+	assert(Engine.time_scale == 1.0)
 	print("SMOKE_OK kills_tracked=", arena.units.map(func(u): return u.kills))
 	get_tree().quit()
 
 
 func show_menu() -> void:
 	get_tree().paused = false
+	Engine.time_scale = 1.0
 	if arena != null:
 		arena.queue_free()
 		arena = null
@@ -46,6 +56,7 @@ func show_menu() -> void:
 
 func start_game() -> void:
 	get_tree().paused = false
+	Engine.time_scale = 1.0
 	if menu != null:
 		menu.queue_free()
 		menu = null

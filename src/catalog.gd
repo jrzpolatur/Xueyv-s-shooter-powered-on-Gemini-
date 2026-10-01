@@ -154,4 +154,26 @@ const MAPS := {
 const MODES := {
 	"ffa": {"name": "独狼乱斗", "desc": "6 人混战，3 分钟内击杀最多者获胜"},
 	"gems": {"name": "宝石争夺", "desc": "3v3 组队，夺取 10 颗宝石并坚守 15 秒"},
+	"boss": {"name": "讨伐魔王", "desc": "全员组队围攻魔王·雪烬，3 分钟内击破！"},
+}
+
+## 局内三选一强化（每 2 击杀触发一次，可叠加）
+const UPGRADES := {
+	"dmg": {"name": "利刃", "desc": "伤害 +15%"},
+	"hp": {"name": "壁垒", "desc": "最大生命 +30 并回复 30"},
+	"speed": {"name": "迅捷", "desc": "移动速度 +10%"},
+	"firerate": {"name": "疾射", "desc": "射击速度 +14%"},
+	"cdr": {"name": "冥思", "desc": "技能冷却 -20%"},
+	"ultgain": {"name": "觉醒", "desc": "必杀充能获取 +30%"},
+	"range": {"name": "鹰眼", "desc": "射程 +18%"},
+	"regen": {"name": "再生", "desc": "脱战回血速度 +80%"},
+}
+
+## 魔王·雪烬 的专属武器
+const BOSS_WEAPON := {
+	"damage": 13.0, "interval": 1.0, "speed": 720.0, "range": 430.0,
+	"pellets": 6, "spread": 20.0, "size": 11.0,
+	"pierce": false, "arc": false, "aoe": 0.0,
+	"color": Color(0.85, 0.3, 1.0), "sfx": "shot2", "shake": 3.0,
+	"desired_range": 260.0,
 }

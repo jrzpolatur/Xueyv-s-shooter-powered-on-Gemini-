@@ -118,3 +118,7 @@ save("start", tone_seq([392, 523, 659, 784], 0.14, sq, amp=0.22, curve=2.5))
 save("ult", mix(sweep(0.45, 220, 880, saw, curve=3.0, amp=0.3),
                 sweep(0.45, 440, 1760, math.sin, curve=3.5, amp=0.25),
                 noise_burst(0.3, lp=0.3, curve=5.0, amp=0.3)))
+
+# 连杀播报：上行琶音号角
+save("streak", mix(tone_seq([523, 659, 784, 1047], 0.5, sq, amp=0.28, curve=3.0),
+                   tone_seq([262, 330, 392, 523], 0.5, math.sin, amp=0.3, curve=3.0)))

@@ -71,6 +71,14 @@ var lava_count := 0
 var lava_tick := 0.0
 var ult_charge := 0.0
 var want_ult := false
+# —— 局内强化 ——
+var fire_rate_mult := 1.0
+var range_mult := 1.0
+var ult_gain_mult := 1.0
+var regen_mult := 1.0
+var next_upgrade_kills := 2
+var dmg_dealt := 0.0
+var is_boss := false
 
 var kills := 0
 var deaths := 0
@@ -98,6 +106,8 @@ var reveal_t := 0.0
 var alive := true
 
 var sprite: Sprite2D
+var sprite_scale := 0.43
+var cshape: CollisionShape2D
 var info: InfoDraw
 var name_label: Label
 var bob_t := 0.0
@@ -125,11 +135,11 @@ func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: 
 
 	collision_layer = 2
 	collision_mask = 1 | 2
-	var cs := CollisionShape2D.new()
+	cshape = CollisionShape2D.new()
 	var sh := CircleShape2D.new()
 	sh.radius = 24.0
-	cs.shape = sh
-	add_child(cs)
+	cshape.shape = sh
+	add_child(cshape)
 
 	sprite = Sprite2D.new()
 	sprite.texture = load(cdef["tex"])
@@ -210,7 +220,7 @@ func _physics_process(delta: float) -> void:
 			shield = 0.0
 	regen_wait = maxf(0.0, regen_wait - delta)
 	if regen_wait <= 0.0 and hp < max_hp:
-		heal(12.0 * delta, false)
+		heal(12.0 * regen_mult * delta, false)
 
 	if dash_t > 0.0:
 		velocity = dash_dir * 950.0
@@ -239,7 +249,7 @@ func _update_visual(delta: float) -> void:
 	if velocity.length() > 20.0:
 		bob_t += delta * 11.0
 		sprite.rotation = sin(bob_t) * 0.07
-		sprite.scale.y = 0.43 + sin(bob_t * 2.0) * 0.012
+		sprite.scale.y = sprite_scale + sin(bob_t * 2.0) * sprite_scale * 0.03
 	else:
 		sprite.rotation = lerpf(sprite.rotation, 0.0, 10.0 * delta)
 
@@ -287,9 +297,13 @@ func _draw() -> void:
 
 
 func fire() -> void:
-	fire_cd = float(wdef["interval"]) * (0.6 if rage_t > 0.0 else 1.0)
+	fire_cd = float(wdef["interval"]) * fire_rate_mult * (0.6 if rage_t > 0.0 else 1.0)
 	reveal_t = 1.0
 	invuln_t = minf(invuln_t, 0.1)
+	var wd := wdef
+	if range_mult != 1.0:
+		wd = wdef.duplicate()
+		wd["range"] = float(wdef["range"]) * range_mult
 	var n := int(wdef["pellets"])
 	var base_angle := aim_dir.angle()
 	for i in range(n):
@@ -302,7 +316,7 @@ func fire() -> void:
 		var d := Vector2.from_angle(ang)
 		var p := Projectile.new()
 		arena.add_child(p)
-		p.setup(self, global_position + d * 30.0, d, wdef, aim_point)
+		p.setup(self, global_position + d * 30.0, d, wd, aim_point)
 	FX.ring(arena, global_position + aim_dir * 38.0 - Vector2(0, 30), 14.0, wdef["color"], 0.12)
 	G.play_sfx(String(wdef["sfx"]), global_position, -4.0)
 	if is_player_unit and arena.has_method("add_shake"):
@@ -348,7 +362,32 @@ func use_skill() -> void:
 
 
 func add_ult_charge(v: float) -> void:
-	ult_charge = minf(ULT_NEED, ult_charge + v)
+	ult_charge = minf(ULT_NEED, ult_charge + v * ult_gain_mult)
+
+
+func apply_upgrade(key: String) -> void:
+	match key:
+		"dmg":
+			dmg_mult *= 1.15
+		"hp":
+			max_hp += 30.0
+			heal(30.0)
+		"speed":
+			move_speed *= 1.1
+		"firerate":
+			fire_rate_mult *= 0.86
+		"cdr":
+			skill_cd_total *= 0.8
+		"ultgain":
+			ult_gain_mult *= 1.3
+		"range":
+			range_mult *= 1.18
+		"regen":
+			regen_mult *= 1.8
+	if is_player_unit:
+		FX.damage_num(arena, global_position + Vector2(0, -140),
+			"强化·" + String(Catalog.UPGRADES[key]["name"]), Color(1, 0.85, 0.4), true)
+	FX.ring(arena, global_position, 60.0, Color(1, 0.85, 0.4), 0.45)
 
 
 func use_ult() -> void:
@@ -422,6 +461,7 @@ func take_damage(amount: float, source: Unit) -> void:
 				source.heal(a * source.lifesteal, false)
 			if source.team != team:
 				source.add_ult_charge(a * 0.9)
+				source.dmg_dealt += a
 	if hp <= 0.0:
 		die(source)
 

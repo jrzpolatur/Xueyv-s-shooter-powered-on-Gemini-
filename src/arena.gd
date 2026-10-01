@@ -71,6 +71,9 @@ var gem_timer := 3.0
 var gems_spawned := 0
 var winning_team := -1
 var win_countdown := 0.0
+# —— Boss / 手感 ——
+var boss: Unit = null
+var player_streak := 0
 
 
 func _ready() -> void:
@@ -118,9 +121,12 @@ func _ready() -> void:
 
 	hud = HUD.new()
 	hud.gem_mode = mode == "gems"
+	hud.boss_mode = mode == "boss"
 	add_child(hud)
 	if mode == "gems":
 		hud.announce("宝石争夺！收集 %d 颗宝石并坚守！" % GEM_TARGET, 1.6)
+	elif mode == "boss":
+		hud.announce("魔王·雪烬 降临！全员出击！", 1.6)
 	else:
 		hud.announce("战斗开始！", 1.2)
 	G.play_sfx("start")
@@ -208,6 +214,53 @@ func _spawn_units() -> void:
 	var bot_names := Catalog.BOT_NAMES.duplicate()
 	bot_names.shuffle()
 
+	if mode == "boss":
+		# 全员 (队伍0) vs 魔王 (队伍1)
+		var pts: Array = spawn_points.duplicate()
+		pts.shuffle()
+		var player3 := Player.new()
+		world.add_child(player3)
+		player3.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
+		player3.global_position = pts[0]
+		player3.died.connect(_on_unit_died)
+		units.append(player3)
+		G.player = player3
+		for i in range(5):
+			var ally := Bot.new()
+			world.add_child(ally)
+			var alo := {
+				"chara": char_keys.pick_random(),
+				"weapon": weapon_keys.pick_random(),
+				"skill": skill_keys.pick_random(),
+				"item": item_keys.pick_random(),
+				"ult": ult_keys.pick_random(),
+			}
+			ally.setup(self, alo, bot_names[i], false, 0)
+			ally.global_position = pts[(i + 1) % pts.size()]
+			ally.died.connect(_on_unit_died)
+			units.append(ally)
+		var b := Boss.new()
+		world.add_child(b)
+		b.setup(self, {
+			"chara": "violet", "weapon": "shotgun", "skill": "nova",
+			"item": "amulet", "ult": "meteor",
+		}, "魔王·雪烬", false, 1)
+		var far_pt: Vector2 = pts[0]
+		var far_d := -1.0
+		for p in spawn_points:
+			var d: float = (p as Vector2).distance_to(pts[0])
+			if d > far_d:
+				far_d = d
+				far_pt = p
+		b.global_position = far_pt
+		b.make_boss()
+		b.died.connect(_on_unit_died)
+		units.append(b)
+		boss = b
+		for u in units:
+			u.refresh_relation()
+		return
+
 	if mode == "gems":
 		# 3v3：玩家 + 2 队友 (队伍0) vs 3 敌人 (队伍1)
 		var home: Array = team_spawns[0].duplicate()
@@ -294,6 +347,11 @@ func _process(delta: float) -> void:
 				_end_match(-1)
 			else:
 				_end_match(0 if b > r else 1)
+	elif mode == "boss":
+		if boss != null and is_instance_valid(boss):
+			hud.set_boss_hp(boss.hp, boss.max_hp)
+		if time_left <= 0.0:
+			_end_match(1)
 	else:
 		if time_left <= 0.0:
 			_end_match(-1)
@@ -429,13 +487,27 @@ func _on_unit_died(unit: Unit, killer: Unit) -> void:
 		killer.kills += 1
 		if killer.is_player_unit:
 			hud.killfeed("你 击败了 %s！" % unit.display_name)
-			hud.announce("击败 %s！" % unit.display_name, 0.8)
+			_slowmo(0.25, 0.14)
+			player_streak += 1
+			if player_streak >= 2:
+				var streak_names := {2: "双杀！", 3: "三连击！", 4: "四连超凡！"}
+				var sname: String = streak_names.get(player_streak, "无人能挡！！")
+				hud.announce(sname, 1.0)
+				G.play_sfx("streak", null, -4.0, 0.02)
+			else:
+				hud.announce("击败 %s！" % unit.display_name, 0.8)
 		elif unit.is_player_unit:
 			hud.killfeed("%s 击败了 你" % killer.display_name)
 		else:
 			hud.killfeed("%s 击败了 %s" % [killer.display_name, unit.display_name])
+		_check_upgrades(killer)
 	if unit.is_player_unit:
 		add_shake(10.0)
+		player_streak = 0
+	# Boss 战：魔王被击破 → 讨伐成功
+	if mode == "boss" and unit.is_boss:
+		_end_match(0)
+		return
 	# 宝石模式：死亡掉落全部宝石
 	if mode == "gems" and unit.gems > 0:
 		var n: int = unit.gems
@@ -444,13 +516,33 @@ func _on_unit_died(unit: Unit, killer: Unit) -> void:
 			var ang := TAU * float(i) / float(n) + randf_range(-0.3, 0.3)
 			var dist := randf_range(30.0, 85.0)
 			spawn_pickup(unit.global_position + Vector2.from_angle(ang) * dist, "gem")
-	if match_over:
+	if match_over or unit.is_boss:
 		return
 	var t := get_tree().create_timer(2.5)
 	t.timeout.connect(func():
 		if match_over or not is_instance_valid(unit) or unit.alive:
 			return
 		unit.respawn(_best_spawn(unit)))
+
+
+func _check_upgrades(killer: Unit) -> void:
+	## 每 2 击杀触发一次三选一强化；AI 自动随机选
+	while killer.kills >= killer.next_upgrade_kills:
+		killer.next_upgrade_kills += 2
+		var pool := Catalog.UPGRADES.keys()
+		pool.shuffle()
+		var options: Array = pool.slice(0, 3)
+		if killer.is_player_unit:
+			hud.offer_upgrades(options)
+		else:
+			killer.apply_upgrade(options[0])
+
+
+func _slowmo(scale: float, dur: float) -> void:
+	Engine.time_scale = scale
+	var t := get_tree().create_timer(dur, true, false, true)
+	t.timeout.connect(func():
+		Engine.time_scale = 1.0)
 
 
 func _best_spawn(unit: Unit) -> Vector2:
@@ -473,10 +565,21 @@ func _best_spawn(unit: Unit) -> Vector2:
 
 func _end_match(winner := -1) -> void:
 	match_over = true
+	Engine.time_scale = 1.0
 	hud.set_status("")
 	var title := ""
 	var ranking := units.duplicate()
-	if mode == "gems":
+	if mode == "boss":
+		ranking.erase(boss)
+		ranking.sort_custom(func(a, b):
+			return a.dmg_dealt > b.dmg_dealt)
+		if winner == 0:
+			title = "讨 伐 成 功 ！"
+			hud.announce("魔王被击破！", 2.0)
+		else:
+			title = "讨 伐 失 败 …"
+			hud.announce("时间耗尽，魔王扬长而去…", 2.0)
+	elif mode == "gems":
 		ranking.sort_custom(func(a, b):
 			if a.gems == b.gems:
 				return a.kills > b.kills
@@ -508,6 +611,8 @@ func _end_match(winner := -1) -> void:
 		if mode == "gems":
 			var side := "蓝" if u.team == G.player.team else "红"
 			text = "%s [%s] %s — 宝石×%d / %d 击杀" % [medal, side, u.display_name, u.gems, u.kills]
+		elif mode == "boss":
+			text = "%s  %s — 输出 %d" % [medal, u.display_name, int(u.dmg_dealt)]
 		else:
 			text = "%s  %s — %d 击杀 / %d 阵亡" % [medal, u.display_name, u.kills, u.deaths]
 		lines.append({"text": text, "highlight": u.is_player_unit})
