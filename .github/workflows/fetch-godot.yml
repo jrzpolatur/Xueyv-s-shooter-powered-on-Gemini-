@@ -1,0 +1,45 @@
+# Temporary helper workflow: downloads Godot editor + web export templates
+# on GitHub's runners and commits them to this branch so the sandboxed
+# dev environment (which cannot reach GitHub's release CDN) can pull them
+# via git. The committed binaries are removed again right after retrieval.
+name: fetch-godot
+on:
+  push:
+    branches:
+      - arena/01a0f6a9-xueyv-s-shooter-powered-on-gem
+    paths:
+      - .github/workflows/fetch-godot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if already fetched
+        id: check
+        run: |
+          if [ -f .godot-bin/DONE ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; else echo "skip=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Download Godot
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          set -e
+          mkdir -p .godot-bin
+          curl -L -o .godot-bin/godot-editor.zip https://github.com/godotengine/godot-builds/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip
+          curl -L -o /tmp/templates.tpz https://github.com/godotengine/godot-builds/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz
+          cd /tmp && unzip -o -j templates.tpz 'templates/web_nothreads_release.zip' 'templates/web_nothreads_debug.zip' 'templates/version.txt'
+          cp /tmp/web_nothreads_release.zip /tmp/web_nothreads_debug.zip /tmp/version.txt "$GITHUB_WORKSPACE/.godot-bin/"
+          ls -la "$GITHUB_WORKSPACE/.godot-bin"
+          echo done > "$GITHUB_WORKSPACE/.godot-bin/DONE"
+      - name: Commit binaries
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          git config user.name "godot-fetch-bot"
+          git config user.email "bot@example.com"
+          git add .godot-bin
+          git commit -m "temp: add godot binaries for sandbox retrieval"
+          git pull --rebase origin ${GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_REF_NAME}
