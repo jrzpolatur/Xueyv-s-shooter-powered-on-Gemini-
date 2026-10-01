@@ -4,6 +4,8 @@ extends Area2D
 
 var kind := "heal"
 var bob := 0.0
+var pid := -1       # 联机同步编号
+var inert := false  # 客户端影子：不可拾取，消失由服务器事件驱动
 
 
 func _ready() -> void:
@@ -26,7 +28,7 @@ func _process(delta: float) -> void:
 
 
 func _on_body(body: Node2D) -> void:
-	if not (body is Unit):
+	if inert or not (body is Unit):
 		return
 	var u := body as Unit
 	if not u.alive:
@@ -43,6 +45,9 @@ func _on_body(body: Node2D) -> void:
 		FX.damage_num(get_parent(), global_position + Vector2(0, -40), "力量提升!", Color(0.85, 0.6, 1.0))
 	G.play_sfx("pickup", global_position, -5.0)
 	FX.ring(get_parent(), global_position, 40.0, Color(1, 1, 1, 0.8), 0.3)
+	var arena := get_parent()
+	if arena != null and arena.has_method("on_pickup_taken"):
+		arena.on_pickup_taken(self)
 	queue_free()
 
 

@@ -6,19 +6,12 @@ var ult_timer := 6.0
 
 
 func make_boss() -> void:
-	is_boss = true
+	apply_boss_visuals()
 	wdef = Catalog.BOSS_WEAPON
 	max_hp = 2800.0
 	hp = max_hp
 	move_speed = 235.0
 	armor_mult = 0.85
-	sprite_scale = 0.78
-	sprite.scale = Vector2(0.78, 0.78)
-	sprite.modulate = Color(0.85, 0.65, 1.0)
-	(cshape.shape as CircleShape2D).radius = 42.0
-	name_label.position = Vector2(-70, -268)
-	name_label.add_theme_font_size_override("font_size", 19)
-	info.position = Vector2(0, -90)
 
 
 func _physics_process(delta: float) -> void:

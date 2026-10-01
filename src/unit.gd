@@ -79,6 +79,13 @@ var regen_mult := 1.0
 var next_upgrade_kills := 2
 var dmg_dealt := 0.0
 var is_boss := false
+# —— 联机 ——
+var net_id := 0            # 全场唯一编号（服务器分配）
+var replica := false       # 客户端影子单位：不跑模拟，只插值渲染
+var net_pos := Vector2.ZERO
+var is_remote := false     # 服务器上的远程玩家单位
+var peer_id := -1
+var loadout_src := {}
 
 var kills := 0
 var deaths := 0
@@ -118,6 +125,7 @@ func setup(p_arena: Node2D, p_loadout: Dictionary, p_name: String, p_is_player: 
 	display_name = p_name
 	is_player_unit = p_is_player
 	team = p_team
+	loadout_src = p_loadout.duplicate()
 	var cdef: Dictionary = Catalog.CHARS[p_loadout["chara"]]
 	wdef = Catalog.WEAPONS[p_loadout["weapon"]]
 	sdef = Catalog.SKILLS[p_loadout["skill"]]
@@ -193,6 +201,9 @@ func is_hidden() -> bool:
 
 
 func _physics_process(delta: float) -> void:
+	if replica:
+		_replica_tick(delta)
+		return
 	if not alive:
 		return
 	fire_cd = maxf(0.0, fire_cd - delta)
@@ -241,6 +252,25 @@ func _physics_process(delta: float) -> void:
 		use_ult()
 	want_ult = false
 
+	_update_visual(delta)
+
+
+func _replica_tick(delta: float) -> void:
+	## 客户端影子单位：位置向服务器快照插值，其余只做视觉衰减
+	if not alive:
+		return
+	fire_cd = maxf(0.0, fire_cd - delta)
+	invuln_t = maxf(0.0, invuln_t - delta)
+	reveal_t = maxf(0.0, reveal_t - delta)
+	slow_t = maxf(0.0, slow_t - delta)
+	rage_t = maxf(0.0, rage_t - delta)
+	dash_t = maxf(0.0, dash_t - delta)
+	var diff := net_pos - global_position
+	velocity = diff / maxf(delta, 0.001) * 0.35   # 仅用于走路动画幅度
+	if diff.length() > 280.0:
+		global_position = net_pos
+	else:
+		global_position = global_position.lerp(net_pos, minf(1.0, 14.0 * delta))
 	_update_visual(delta)
 
 
@@ -305,6 +335,7 @@ func fire() -> void:
 		wd = wdef.duplicate()
 		wd["range"] = float(wdef["range"]) * range_mult
 	var n := int(wdef["pellets"])
+	Net.ev_fire(self)
 	var base_angle := aim_dir.angle()
 	for i in range(n):
 		var ang := base_angle
@@ -325,6 +356,7 @@ func fire() -> void:
 
 func use_skill() -> void:
 	skill_cd = skill_cd_total
+	Net.ev_skill(self)
 	G.play_sfx("skill", global_position, -6.0)
 	match String(sdef["id"]):
 		"dash":
@@ -392,6 +424,7 @@ func apply_upgrade(key: String) -> void:
 
 func use_ult() -> void:
 	ult_charge = 0.0
+	Net.ev_ult(self)
 	G.play_sfx("ult", global_position, -2.0)
 	if is_player_unit and arena.has_method("add_shake"):
 		arena.add_shake(8.0)
@@ -441,6 +474,8 @@ func _storm_wave() -> void:
 
 
 func take_damage(amount: float, source: Unit) -> void:
+	if replica:
+		return   # 客户端影子：血量由服务器快照驱动
 	if not alive or invuln_t > 0.0:
 		return
 	var a := amount * armor_mult
@@ -467,7 +502,7 @@ func take_damage(amount: float, source: Unit) -> void:
 
 
 func heal(amount: float, show := true) -> void:
-	if not alive:
+	if replica or not alive:
 		return
 	var before := hp
 	hp = minf(max_hp, hp + amount)
@@ -515,3 +550,16 @@ func respawn(pos: Vector2) -> void:
 	info.visible = true
 	name_label.visible = true
 	FX.ring(arena, pos, 70.0, Color(1, 1, 1, 0.8), 0.4)
+	Net.ev_respawn(self)
+
+
+func apply_boss_visuals() -> void:
+	## 魔王外观（服务器真身与客户端影子共用）
+	is_boss = true
+	sprite_scale = 0.78
+	sprite.scale = Vector2(0.78, 0.78)
+	sprite.modulate = Color(0.85, 0.65, 1.0)
+	(cshape.shape as CircleShape2D).radius = 42.0
+	name_label.position = Vector2(-70, -268)
+	name_label.add_theme_font_size_override("font_size", 19)
+	info.position = Vector2(0, -90)

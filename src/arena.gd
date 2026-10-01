@@ -74,15 +74,28 @@ var win_countdown := 0.0
 # —— Boss / 手感 ——
 var boss: Unit = null
 var player_streak := 0
+# —— 联机 ——
+var replica := false        # 客户端影子竞技场：渲染快照，不跑模拟
+var net_data := {}          # 服务器发来的 init 数据（仅 replica）
+var uid_counter := 1
+var unit_map := {}          # net_id -> Unit
+var crates: Array = []      # 按建图顺序编号的补给箱
+var net_pickups := {}       # pid -> Pickup
+var next_pid := 1
 
 
 func _ready() -> void:
 	mode = G.mode
 	map_key = G.map
+	if replica:
+		mode = String(net_data.get("mode", "ffa"))
+		map_key = String(net_data.get("map", "grass"))
 	if map_key == "random" or not Catalog.MAPS.has(map_key):
 		map_key = Catalog.MAPS.keys().pick_random()
 	mdef = Catalog.MAPS[map_key]
 	time_left = GEMS_TIME if mode == "gems" else FFA_TIME
+	if replica:
+		time_left = float(net_data.get("tl", time_left))
 	map_h = (mdef["rows"] as Array).size()
 	wall_tex = load(String(mdef["wall"]))
 	bush_tex = load("res://assets/img/bush.png")
@@ -104,7 +117,15 @@ func _ready() -> void:
 	add_child(bush_layer)
 
 	_build_map()
-	_spawn_units()
+	if replica:
+		_spawn_replicas()
+	else:
+		_spawn_units()
+		for u in units:
+			if u.net_id == 0:
+				u.net_id = uid_counter
+				unit_map[uid_counter] = u
+				uid_counter += 1
 
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
@@ -154,6 +175,8 @@ func _build_map() -> void:
 					lv.global_position = pos
 				"C":
 					var c := Crate.new()
+					c.ci = crates.size()
+					crates.append(c)
 					world.add_child(c)
 					c.global_position = pos
 				"1", "3", "5":
@@ -218,13 +241,16 @@ func _spawn_units() -> void:
 		# 全员 (队伍0) vs 魔王 (队伍1)
 		var pts: Array = spawn_points.duplicate()
 		pts.shuffle()
-		var player3 := Player.new()
-		world.add_child(player3)
-		player3.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
-		player3.global_position = pts[0]
-		player3.died.connect(_on_unit_died)
-		units.append(player3)
-		G.player = player3
+		if Net.is_server():
+			_spawn_bot_at(bot_names[6], 0, pts[0])
+		else:
+			var player3 := Player.new()
+			world.add_child(player3)
+			player3.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
+			player3.global_position = pts[0]
+			player3.died.connect(_on_unit_died)
+			units.append(player3)
+			G.player = player3
 		for i in range(5):
 			var ally := Bot.new()
 			world.add_child(ally)
@@ -268,13 +294,16 @@ func _spawn_units() -> void:
 		var away: Array = team_spawns[1].duplicate()
 		away.shuffle()
 
-		var player := Player.new()
-		world.add_child(player)
-		player.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
-		player.global_position = home[0]
-		player.died.connect(_on_unit_died)
-		units.append(player)
-		G.player = player
+		if Net.is_server():
+			_spawn_bot_at(bot_names[6], 0, home[0])
+		else:
+			var player := Player.new()
+			world.add_child(player)
+			player.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
+			player.global_position = home[0]
+			player.died.connect(_on_unit_died)
+			units.append(player)
+			G.player = player
 
 		for i in range(5):
 			var bot := Bot.new()
@@ -301,13 +330,16 @@ func _spawn_units() -> void:
 		if points.is_empty():
 			points = [Vector2(300, 300)]
 
-		var player2 := Player.new()
-		world.add_child(player2)
-		player2.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
-		player2.global_position = points[0]
-		player2.died.connect(_on_unit_died)
-		units.append(player2)
-		G.player = player2
+		if Net.is_server():
+			_spawn_bot_at(bot_names[6], 0, points[0])
+		else:
+			var player2 := Player.new()
+			world.add_child(player2)
+			player2.setup(self, G.loadout, "你 · " + String(Catalog.CHARS[G.loadout["chara"]]["name"]), true, 0)
+			player2.global_position = points[0]
+			player2.died.connect(_on_unit_died)
+			units.append(player2)
+			G.player = player2
 
 		for i in range(5):
 			var bot2 := Bot.new()
@@ -337,6 +369,15 @@ func _process(delta: float) -> void:
 		camera.position = G.player.global_position
 	shake = maxf(0.0, shake - 40.0 * delta) * exp(-6.0 * delta)
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
+
+	if replica:
+		# 影子竞技场：计时与计分来自服务器快照，只负责展示
+		time_left = maxf(0.0, time_left)
+		if hud.gem_mode:
+			hud.set_gems(team_gems(0), team_gems(1))
+		if hud.boss_mode and boss != null and is_instance_valid(boss):
+			hud.set_boss_hp(boss.hp, boss.max_hp)
+		return
 
 	if mode == "gems":
 		_process_gems(delta)
@@ -478,24 +519,26 @@ func _spawn_pickup_deferred(pos: Vector2, kind: String) -> void:
 		return
 	var p := Pickup.new()
 	p.kind = kind
+	p.pid = next_pid
+	next_pid += 1
+	net_pickups[p.pid] = p
 	add_child(p)
 	p.global_position = pos
+	Net.ev_pk_add(p)
+
+
+func on_pickup_taken(p: Node) -> void:
+	net_pickups.erase(p.pid)
+	Net.ev_pk_gone(p.pid, true)
 
 
 func _on_unit_died(unit: Unit, killer: Unit) -> void:
+	Net.ev_die(unit, killer)
 	if killer != null and is_instance_valid(killer) and killer != unit:
 		killer.kills += 1
 		if killer.is_player_unit:
 			hud.killfeed("你 击败了 %s！" % unit.display_name)
-			_slowmo(0.25, 0.14)
-			player_streak += 1
-			if player_streak >= 2:
-				var streak_names := {2: "双杀！", 3: "三连击！", 4: "四连超凡！"}
-				var sname: String = streak_names.get(player_streak, "无人能挡！！")
-				hud.announce(sname, 1.0)
-				G.play_sfx("streak", null, -4.0, 0.02)
-			else:
-				hud.announce("击败 %s！" % unit.display_name, 0.8)
+			notify_player_kill(unit.display_name)
 		elif unit.is_player_unit:
 			hud.killfeed("%s 击败了 你" % killer.display_name)
 		else:
@@ -534,8 +577,23 @@ func _check_upgrades(killer: Unit) -> void:
 		var options: Array = pool.slice(0, 3)
 		if killer.is_player_unit:
 			hud.offer_upgrades(options)
+		elif killer.is_remote:
+			Net.ev_offer(killer.peer_id, options)
 		else:
 			killer.apply_upgrade(options[0])
+
+
+func notify_player_kill(victim_name: String) -> void:
+	## 本机玩家击杀的爽感反馈：慢动作 + 连杀播报（联机时由客户端调用）
+	_slowmo(0.25, 0.14)
+	player_streak += 1
+	if player_streak >= 2:
+		var streak_names := {2: "双杀！", 3: "三连击！", 4: "四连超凡！"}
+		var sname: String = streak_names.get(player_streak, "无人能挡！！")
+		hud.announce(sname, 1.0)
+		G.play_sfx("streak", null, -4.0, 0.02)
+	else:
+		hud.announce("击败 %s！" % victim_name, 0.8)
 
 
 func _slowmo(scale: float, dur: float) -> void:
@@ -584,39 +642,54 @@ func _end_match(winner := -1) -> void:
 			if a.gems == b.gems:
 				return a.kills > b.kills
 			return a.gems > b.gems)
+	var my_team := 0
+	if G.player != null and is_instance_valid(G.player):
+		my_team = G.player.team
+	if mode == "gems":
 		if winner == -1:
 			title = "平局！"
 			hud.announce("时间到，平局！", 2.0)
-		elif winner == G.player.team:
+		elif winner == my_team:
 			title = "胜 利 ！"
 			hud.announce("蓝队胜利！", 2.0)
 		else:
 			title = "惜 败 …"
 			hud.announce("红队获得了宝石…", 2.0)
-	else:
+	elif mode != "boss":
 		ranking.sort_custom(func(a, b):
 			if a.kills == b.kills:
 				return a.deaths < b.deaths
 			return a.kills > b.kills)
-		var player_rank := ranking.find(G.player) + 1
 		title = "— 战斗结束 —"
-		hud.announce("时间到！你排名第 %d" % player_rank, 2.0)
+		if G.player != null and is_instance_valid(G.player):
+			hud.announce("时间到！你排名第 %d" % (ranking.find(G.player) + 1), 2.0)
+		else:
+			hud.announce("时间到！", 2.0)
 	G.play_sfx("death", null, -6.0)
 
 	var lines: Array = []
+	var rows: Array = []
 	for i in range(ranking.size()):
 		var u: Node = ranking[i]
 		var medal: String = ["①", "②", "③", "④", "⑤", "⑥"][mini(i, 5)]
 		var text := ""
 		if mode == "gems":
-			var side := "蓝" if u.team == G.player.team else "红"
+			var side := "蓝" if u.team == my_team else "红"
 			text = "%s [%s] %s — 宝石×%d / %d 击杀" % [medal, side, u.display_name, u.gems, u.kills]
 		elif mode == "boss":
 			text = "%s  %s — 输出 %d" % [medal, u.display_name, int(u.dmg_dealt)]
 		else:
 			text = "%s  %s — %d 击杀 / %d 阵亡" % [medal, u.display_name, u.kills, u.deaths]
 		lines.append({"text": text, "highlight": u.is_player_unit})
+		rows.append([u.net_id, text])
+	Net.ev_end(title, rows)
 
+	if Net.is_server():
+		# 专用服务器：展示结算 8 秒后自动开新一局
+		var rt := get_tree().create_timer(8.0)
+		rt.timeout.connect(func():
+			get_tree().paused = false
+			restart_requested.emit())
 	get_tree().paused = true
 	hud.show_results(title, lines,
 		func():
@@ -625,3 +698,166 @@ func _end_match(winner := -1) -> void:
 		func():
 			get_tree().paused = false
 			menu_requested.emit())
+
+
+# ══════════════════ 联机：服务器侧 ══════════════════
+
+func _rand_loadout() -> Dictionary:
+	return {
+		"chara": Catalog.CHARS.keys().pick_random(),
+		"weapon": Catalog.WEAPONS.keys().pick_random(),
+		"skill": Catalog.SKILLS.keys().pick_random(),
+		"item": Catalog.ITEMS.keys().pick_random(),
+		"ult": Catalog.ULTS.keys().pick_random(),
+	}
+
+
+func _spawn_bot_at(bname: String, bteam: int, pos: Vector2) -> Bot:
+	var b := Bot.new()
+	world.add_child(b)
+	b.setup(self, _rand_loadout(), bname, false, bteam)
+	b.global_position = pos
+	b.died.connect(_on_unit_died)
+	units.append(b)
+	return b
+
+
+func add_remote_player(p_peer: int, pname: String, lo: Dictionary) -> Unit:
+	## 远程玩家加入：优先顶替一名 AI（继承其队伍与位置）
+	var victim: Unit = null
+	for u in units:
+		if is_instance_valid(u) and u is Bot and not u.is_boss:
+			victim = u
+			break
+	var team := 0
+	var pos: Vector2 = spawn_points.pick_random() if not spawn_points.is_empty() else Vector2(300, 300)
+	if victim != null:
+		team = victim.team
+		pos = victim.global_position
+		units.erase(victim)
+		unit_map.erase(victim.net_id)
+		victim.queue_free()
+	elif mode == "ffa":
+		team = 50 + units.size()
+	var ru := Unit.new()
+	world.add_child(ru)
+	ru.setup(self, lo, pname, false, team)
+	ru.is_remote = true
+	ru.peer_id = p_peer
+	ru.global_position = pos
+	ru.died.connect(_on_unit_died)
+	units.append(ru)
+	ru.net_id = uid_counter
+	unit_map[uid_counter] = ru
+	uid_counter += 1
+	for u in units:
+		if is_instance_valid(u):
+			u.refresh_relation()
+	hud.killfeed("%s 加入了战斗！" % pname)
+	return ru
+
+
+func remove_net_unit(u: Unit) -> void:
+	units.erase(u)
+	unit_map.erase(u.net_id)
+	u.queue_free()
+
+
+# ══════════════════ 联机：客户端影子 ══════════════════
+
+func _spawn_replicas() -> void:
+	for ud in net_data.get("units", []):
+		var uid := int(ud["i"])
+		var mine := uid == Net.my_uid
+		var u: Unit
+		if mine:
+			u = Player.new()
+		else:
+			u = Unit.new()
+		u.replica = true
+		world.add_child(u)
+		u.setup(self, ud["lo"], String(ud["n"]), mine, int(ud["tm"]))
+		u.net_id = uid
+		unit_map[uid] = u
+		u.global_position = Vector2(float(ud["x"]), float(ud["y"]))
+		u.net_pos = u.global_position
+		u.max_hp = float(ud["mh"])
+		u.hp = float(ud["hp"])
+		if bool(ud.get("bo", false)):
+			u.apply_boss_visuals()
+			boss = u
+		if not bool(ud.get("al", true)):
+			net_die_fx(u, false)
+		units.append(u)
+		if mine:
+			G.player = u
+	for u in units:
+		u.refresh_relation()
+	for ci in net_data.get("cg", []):
+		net_crate_break(int(ci), false)
+	for pk in net_data.get("pks", []):
+		net_pickup_add(pk)
+
+
+func net_crate_break(ci: int, fx := true) -> void:
+	if ci < 0 or ci >= crates.size():
+		return
+	var c = crates[ci]  # 可能已释放
+	if c == null or not is_instance_valid(c):
+		return
+	if fx:
+		c.break_fx()
+	c.queue_free()
+
+
+func net_pickup_add(d: Dictionary) -> void:
+	var pid := int(d.get("p", -1))
+	if pid < 0 or net_pickups.has(pid):
+		return
+	var p := Pickup.new()
+	p.kind = String(d.get("k", "heal"))
+	p.pid = pid
+	p.inert = true
+	net_pickups[pid] = p
+	add_child(p)
+	p.global_position = Vector2(float(d.get("x", 0)), float(d.get("y", 0)))
+
+
+func net_pickup_gone(pid: int, taken: bool) -> void:
+	var p = net_pickups.get(pid)
+	net_pickups.erase(pid)
+	if p == null or not is_instance_valid(p):
+		return
+	if taken:
+		G.play_sfx("pickup", p.global_position, -5.0)
+		FX.ring(self, p.global_position, 40.0, Color(1, 1, 1, 0.8), 0.3)
+	p.queue_free()
+
+
+func net_die_fx(u: Unit, fx := true) -> void:
+	u.alive = false
+	u.hp = 0.0
+	u.shield = 0.0
+	u.set_deferred("collision_layer", 0)
+	u.set_deferred("collision_mask", 0)
+	u.sprite.visible = false
+	u.info.visible = false
+	u.name_label.visible = false
+	if fx:
+		FX.burst(self, u.global_position, u.chara_tint, 26, 380.0)
+		FX.ring(self, u.global_position, 90.0, u.chara_tint, 0.45)
+		G.play_sfx("death", u.global_position, -2.0)
+
+
+func net_end(d: Dictionary) -> void:
+	match_over = true
+	Engine.time_scale = 1.0
+	hud.set_status("")
+	var lines: Array = []
+	for row in d.get("rows", []):
+		lines.append({"text": String(row[1]), "highlight": int(row[0]) == Net.my_uid})
+	hud.show_results(String(d.get("ti", "— 战斗结束 —")), lines, _net_back, _net_back)
+
+
+func _net_back() -> void:
+	menu_requested.emit()

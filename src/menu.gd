@@ -5,6 +5,37 @@ extends CanvasLayer
 signal start_requested
 
 var desc_labels := {}
+var net_label: Label
+
+
+func _exit_tree() -> void:
+	if Net.status_changed.is_connected(_on_net_status):
+		Net.status_changed.disconnect(_on_net_status)
+
+
+func _on_net_status(text: String) -> void:
+	if net_label != null and is_instance_valid(net_label):
+		net_label.text = text
+
+
+func _on_join_pressed() -> void:
+	G.play_sfx("ui")
+	Net.join(_default_ws_url())
+
+
+func _default_ws_url() -> String:
+	## Web 导出：根据页面地址推导同沙箱 9090 端口的 WS 地址；原生默认连本机
+	if OS.has_feature("web"):
+		var host := str(JavaScriptBridge.eval("location.host", true))
+		var https := str(JavaScriptBridge.eval("location.protocol", true)) == "https:"
+		var scheme := "wss://" if https else "ws://"
+		if ":" in host:
+			return scheme + host.split(":")[0] + ":9090"
+		var dash := host.find("-")
+		if dash > 0 and host.substr(0, dash).is_valid_int():
+			return scheme + "9090" + host.substr(dash)
+		return scheme + host + ":9090"
+	return "ws://127.0.0.1:9090"
 
 
 func _ready() -> void:
@@ -119,7 +150,30 @@ func _ready() -> void:
 	var start_wrap := HBoxContainer.new()
 	start_wrap.alignment = BoxContainer.ALIGNMENT_CENTER
 	start_wrap.add_child(start)
+
+	# —— 联机对战 ——
+	var join := Button.new()
+	join.text = "联机对战"
+	join.focus_mode = Control.FOCUS_NONE
+	join.custom_minimum_size = Vector2(170, 62)
+	join.add_theme_font_size_override("font_size", 22)
+	join.add_theme_stylebox_override("normal", _style(Color(0.2, 0.5, 0.9, 0.95), 16))
+	join.add_theme_stylebox_override("hover", _style(Color(0.3, 0.6, 1.0, 1.0), 16))
+	join.add_theme_stylebox_override("pressed", _style(Color(0.12, 0.38, 0.75, 1.0), 16))
+	join.pressed.connect(_on_join_pressed)
+	start_wrap.add_theme_constant_override("separation", 16)
+	start_wrap.add_child(join)
 	center.add_child(start_wrap)
+
+	net_label = Label.new()
+	net_label.text = ""
+	net_label.add_theme_font_size_override("font_size", 15)
+	net_label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	net_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	net_label.add_theme_constant_override("outline_size", 4)
+	net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	center.add_child(net_label)
+	Net.status_changed.connect(_on_net_status)
 
 	var hint := Label.new()
 	hint.text = "电脑：WASD 移动 · 鼠标瞄准 · 左键射击 · 空格/右键技能 · E 必杀      手机：双摇杆 + 技能/必杀按钮"

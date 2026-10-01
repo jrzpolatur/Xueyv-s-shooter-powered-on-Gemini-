@@ -282,7 +282,10 @@ func _pick_upgrade(idx: int) -> void:
 		return
 	upgrade_panel.visible = false
 	upgrade_open = false
-	if G.player != null and is_instance_valid(G.player):
+	if Net.is_client():
+		Net.send_upgrade_pick(upgrade_options[idx])
+		G.play_sfx("ui")
+	elif G.player != null and is_instance_valid(G.player):
 		G.player.apply_upgrade(upgrade_options[idx])
 		G.play_sfx("ui")
 	if not upgrade_queue.is_empty():
@@ -311,6 +314,7 @@ func set_gems(blue: int, red: int) -> void:
 
 func set_status(text: String) -> void:
 	status_label.text = text
+	Net.ev_stat(text)
 
 
 func set_time(t: float) -> void:
@@ -321,6 +325,7 @@ func set_time(t: float) -> void:
 
 
 func killfeed(text: String) -> void:
+	Net.ev_feed(text)
 	var l := _mk_label(text, 17, Color(1, 1, 1, 0.95))
 	feed_box.add_child(l)
 	var tw := l.create_tween()
@@ -333,6 +338,7 @@ func killfeed(text: String) -> void:
 
 
 func announce(text: String, dur := 1.4) -> void:
+	Net.ev_ann(text, dur)
 	announce_label.text = text
 	announce_label.modulate.a = 0.0
 	var tw := announce_label.create_tween()

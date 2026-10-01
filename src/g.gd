@@ -10,6 +10,7 @@ var loadout := {
 }
 var mode := "ffa"
 var map := "random"
+var player_name := "游侠%03d" % (randi() % 1000)
 var touch_mode := false
 var player: Node = null
 var sfx_cache := {}
